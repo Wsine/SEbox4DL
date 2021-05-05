@@ -7,8 +7,15 @@ name = "pypi"
 torch = {file = "https://download.pytorch.org/whl/cu111/torch-1.8.1%2Bcu111-cp36-cp36m-linux_x86_64.whl"}
 torchvision = {file = "https://download.pytorch.org/whl/cu111/torchvision-0.9.1%2Bcu111-cp36-cp36m-linux_x86_64.whl"}
 tqdm = "*"
+notebook = "*"
+jupyter-http-over-ws = "*"
+jedi = "==0.17.2"
+ipywidgets = "*"
 
 [dev-packages]
 
 [requires]
 python_version = "3.6"
+
+[scripts]
+notebook = "jupyter notebook --config=.notebook_config.py"
