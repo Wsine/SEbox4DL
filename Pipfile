@@ -4,15 +4,17 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-torch = {file = "https://download.pytorch.org/whl/cu111/torch-1.8.1%2Bcu111-cp36-cp36m-linux_x86_64.whl"}
-torchvision = {file = "https://download.pytorch.org/whl/cu111/torchvision-0.9.1%2Bcu111-cp36-cp36m-linux_x86_64.whl"}
+# torch = {file = "https://download.pytorch.org/whl/cu111/torch-1.8.1%2Bcu111-cp36-cp36m-linux_x86_64.whl"}
+# torchvision = {file = "https://download.pytorch.org/whl/cu111/torchvision-0.9.1%2Bcu111-cp36-cp36m-linux_x86_64.whl"}
 tqdm = "*"
+sklearn = "*"
+
+[dev-packages]
 notebook = "*"
 jupyter-http-over-ws = "*"
 jedi = "==0.17.2"
 ipywidgets = "*"
-
-[dev-packages]
+matplotlib = "*"
 
 [requires]
 python_version = "3.6"

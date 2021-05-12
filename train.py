@@ -1,52 +1,16 @@
-import os
-
 import torch
-import torchvision
-import torchvision.transforms as transforms
 from tqdm import tqdm
 
+from dataset import load_dataset
+from model import load_model
 from arguments import parser
 from utils import *
 
 
-def load_dataset(opt):
-    trainset = torchvision.datasets.CIFAR10(
-        root=opt.data_dir, train=True, download=True,
-        transform=transforms.Compose([
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
-        ])
-    )
-    trainloader = torch.utils.data.DataLoader(  # type: ignore
-        trainset, batch_size=opt.batch_size, shuffle=True, num_workers=2
-    )
-
-    testset = torchvision.datasets.CIFAR10(
-        root=opt.data_dir, train=False, download=True,
-        transform=transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
-        ])
-    )
-    testloader = torch.utils.data.DataLoader(  # type: ignore
-        testset, batch_size=opt.batch_size, shuffle=False, num_workers=2
-    )
-
-    return trainloader, testloader
-
-
-def load_model(opt):
-    from models.cifar.resnet import ResNet34
-    model = ResNet34()
-    return model
-
-
-def train(model, trainloader, optimizer, criterion, device):
+def train(model, trainloader, optimizer, criterion, device, desc="   Train"):
     model.train()
     train_loss, correct, total = 0, 0, 0
-    with tqdm(trainloader, desc="   Train") as tepoch:
+    with tqdm(trainloader, desc=desc) as tepoch:
         for batch_idx, (inputs, targets) in enumerate(tepoch):
             inputs, targets = inputs.to(device), targets.to(device)
             optimizer.zero_grad()
@@ -66,10 +30,11 @@ def train(model, trainloader, optimizer, criterion, device):
 
 
 @torch.no_grad()
-def eval(model, valloader, optimizer, criterion, device):
+def eval(model, valloader, criterion, device, desc="Evaluate"):
     model.eval()
     test_loss, correct, total = 0, 0, 0
-    with tqdm(valloader, desc="Evaluate") as tepoch:
+    pred_result = []
+    with tqdm(valloader, desc=desc) as tepoch:
         for batch_idx, (inputs, targets) in enumerate(tepoch):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = model(inputs)
@@ -78,6 +43,7 @@ def eval(model, valloader, optimizer, criterion, device):
             test_loss += loss.item()
             _, predicted = outputs.max(1)
             total += targets.size(0)
+            pred_result.append(predicted.eq(targets).cpu())
             correct += predicted.eq(targets).sum().item()
 
             avg_loss = test_loss / (batch_idx + 1)
@@ -85,7 +51,8 @@ def eval(model, valloader, optimizer, criterion, device):
             tepoch.set_postfix(loss=avg_loss, acc=acc)
 
     acc = 100. * correct / total
-    return acc
+    pred_result = torch.cat(pred_result).tolist()
+    return acc, pred_result
 
 
 def main():
@@ -94,7 +61,7 @@ def main():
     guard_folder([opt.output_dir])
 
     device = torch.device(opt.device if torch.cuda.is_available() else "cpu")
-    trainloader, testloader = load_dataset(opt)
+    trainloader, _, testloader = load_dataset(opt)
     model = load_model(opt).to(device)
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(
@@ -116,7 +83,7 @@ def main():
     for epoch in range(start_epoch + 1, opt.max_epoch):
         print("Epoch: {}".format(epoch))
         train(model, trainloader, optimizer, criterion, device)
-        acc = eval(model, testloader, optimizer, criterion, device)
+        acc, _ = eval(model, testloader, criterion, device)
         if acc > best_acc:
             print("Saving...")
             state = {
