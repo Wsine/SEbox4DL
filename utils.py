@@ -3,14 +3,19 @@ import json
 import pickle
 
 
-def get_model_path(opt):
-    path = os.path.join(opt.output_dir, f"{opt.dataset}_{opt.model}.pth")
+def get_model_path(opt, state="best"):
+    path = os.path.join(
+        opt.output_dir, opt.dataset, opt.model, f"model_{state}.pth")
     return path
 
 
-def guard_folder(folder):
-    if isinstance(folder, str):
+def guard_folder(opt, folder=None):
+    if not folder:
+        folder = []
+    elif isinstance(folder, str):
         folder = [folder]
+    path = os.path.join(opt.output_dir, opt.dataset, opt.model)
+    folder.append(path)
     for f in folder:
         if not os.path.isdir(f):
             os.makedirs(f)
@@ -46,7 +51,8 @@ def preview_object(obj):
 
 def export_object(opt, filename, obj):
     mode = 'b' if filename.endswith('.pkl') else ''
-    filepath = os.path.join(opt.output_dir, f"{opt.dataset}_{opt.model}_{filename}")
+    filepath = os.path.join(
+        opt.output_dir, opt.dataset, opt.model, f"{filename}")
     with open(filepath, f'w{mode}') as f:
         if mode == 'b':
             pickle.dump(obj, f)

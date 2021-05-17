@@ -21,4 +21,6 @@ optim_group.add_argument("--weight_decay", type=float, default=5e-4)
 select_group = parser.add_argument_group('filter_selection')
 select_group.add_argument("--mask_smallest_ratio", type=float, default=0.1)
 select_group.add_argument("--suspicious_ratio", type=float, default=0.05)
+correct_group = parser.add_argument_group('correct')
+correct_group.add_argument("--correct_epoch", type=int, default=20)
 

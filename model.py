@@ -1,3 +1,8 @@
+import torch
+
+from utils import get_model_path
+
+
 def load_model(opt):
     if "cifar" in opt.dataset:
         if opt.model == "resnet34":
@@ -10,4 +15,13 @@ def load_model(opt):
             raise ValueError("Invalid model name")
     else:
         raise ValueError("Invalid dataset name")
+
+def resume_model(opt):
+    model = load_model(opt)
+    ckp = torch.load(
+        get_model_path(opt),
+        map_location=torch.device("cpu")
+    )
+    model.load_state_dict(ckp["net"])
+    return model, ckp
 

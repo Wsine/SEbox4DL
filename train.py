@@ -7,8 +7,16 @@ from arguments import parser
 from utils import *
 
 
-def train(model, trainloader, optimizer, criterion, device, desc="   Train"):
-    model.train()
+def train(
+        model, trainloader, optimizer, criterion, device,
+        desc="   Train", partial=None):
+    if partial:
+        model.eval()
+        for m in model.modules():
+            if any([isinstance(m, p) for p in partial]):
+                m.train()
+    else:
+        model.train()
     train_loss, correct, total = 0, 0, 0
     with tqdm(trainloader, desc=desc) as tepoch:
         for batch_idx, (inputs, targets) in enumerate(tepoch):
@@ -58,7 +66,7 @@ def eval(model, valloader, criterion, device, desc="Evaluate"):
 def main():
     opt = parser.parse_args()
     print(opt)
-    guard_folder([opt.output_dir])
+    guard_folder(opt)
 
     device = torch.device(opt.device if torch.cuda.is_available() else "cpu")
     trainloader, _, testloader = load_dataset(opt)

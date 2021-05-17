@@ -1,23 +1,12 @@
 import copy
-from utils import get_model_path
 
 import torch
 
-from model import load_model
+from model import resume_model
 from dataset import load_dataset
 from arguments import parser
 from train import train, eval
 from utils import *
-
-
-def resume_model(opt):
-    model = load_model()
-    ckp = torch.load(
-        get_model_path(opt),
-        map_location=torch.device("cpu")
-    )
-    model.load_state_dict(ckp["net"])
-    return model, ckp
 
 
 def overall_improve(opt, model, ckp, dataloaders, device):
@@ -122,7 +111,7 @@ def main():
 
     suspicious_filters = differentiate_weights(opt, oa_dstate, oe_dstate)
     preview_object(suspicious_filters)
-    export_object(opt, "suspicious.json", suspicious_filters)
+    export_object(opt, "suspicious_filters.json", suspicious_filters)
 
 
 if __name__ == "__main__":
