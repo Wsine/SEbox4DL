@@ -38,10 +38,12 @@ def train(
 
 
 @torch.no_grad()
-def eval(model, valloader, criterion, device, desc="Evaluate"):
+def eval(
+        model, valloader, criterion, device,
+        desc="Evaluate", return_label=False):
     model.eval()
     test_loss, correct, total = 0, 0, 0
-    pred_result = []
+    pred_labels, trg_labels = [], []
     with tqdm(valloader, desc=desc) as tepoch:
         for batch_idx, (inputs, targets) in enumerate(tepoch):
             inputs, targets = inputs.to(device), targets.to(device)
@@ -51,16 +53,24 @@ def eval(model, valloader, criterion, device, desc="Evaluate"):
             test_loss += loss.item()
             _, predicted = outputs.max(1)
             total += targets.size(0)
-            pred_result.append(predicted.eq(targets).cpu())
             correct += predicted.eq(targets).sum().item()
+
+            if return_label:
+                pred_labels.append(predicted.cpu())
+                trg_labels.append(targets.cpu())
 
             avg_loss = test_loss / (batch_idx + 1)
             acc = 100. * correct / total
             tepoch.set_postfix(loss=avg_loss, acc=acc)
 
     acc = 100. * correct / total
-    pred_result = torch.cat(pred_result).tolist()
-    return acc, pred_result
+
+    if return_label:
+        pred_labels = torch.cat(pred_labels)
+        trg_labels = torch.cat(trg_labels)
+        return acc, (pred_labels, trg_labels)
+
+    return acc
 
 
 def main():
@@ -91,7 +101,7 @@ def main():
     for epoch in range(start_epoch + 1, opt.max_epoch):
         print("Epoch: {}".format(epoch))
         train(model, trainloader, optimizer, criterion, device)
-        acc, _ = eval(model, testloader, criterion, device)
+        acc = eval(model, testloader, criterion, device)
         if acc > best_acc:
             print("Saving...")
             state = {

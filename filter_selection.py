@@ -1,6 +1,8 @@
 import copy
 
 import torch
+import torch.nn as nn
+from tqdm import tqdm
 
 from model import resume_model
 from dataset import load_dataset
@@ -32,16 +34,18 @@ def overall_improve(opt, model, ckp, dataloaders, device):
     return dstate1
 
 
-def error_bias_improve(opt, model, ckp, datasets, dataloaders, device):
-    print("[info] Error bias improvement")
-    trainset, valset, testset = datasets
-    _, valloader, testloader = dataloaders
+def construct_error_bias_dataloader(opt, model, datasets, dataloaders, device):
+    trainset, valset, _ = datasets
+    _, valloader, _ = dataloaders
 
     model2 = copy.deepcopy(model).to(device)
-    criterion = torch.nn.CrossEntropyLoss()
-    _, pred_result = eval(model2, valloader, criterion, device, desc=" Extract")
 
-    class_weights = [0 for _ in range(len(testset.classes))]
+    criterion = torch.nn.CrossEntropyLoss()
+    _, (pred_labels, trg_labels) = eval(
+        model2, valloader, criterion, device, desc=" Extract", return_label=True)
+    pred_result = pred_labels.eq(trg_labels).tolist()
+
+    class_weights = [0 for _ in range(len(opt.classes))]
     for sample, pred in zip(valset, pred_result):
         if not pred:
             _, label = sample
@@ -58,6 +62,17 @@ def error_bias_improve(opt, model, ckp, datasets, dataloaders, device):
         trainset, batch_size=opt.batch_size, sampler=class_sampler, num_workers=2
     )
 
+    return classloader
+
+
+def error_bias_improve(opt, model, ckp, datasets, dataloaders, device):
+    print("[info] Error bias improvement")
+
+    classloader = construct_error_bias_dataloader(opt, model, datasets, dataloaders, device)
+    _, _, testloader = dataloaders
+
+    model2 = copy.deepcopy(model).to(device)
+    criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(
         model2.parameters(),
         lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay
@@ -98,6 +113,72 @@ def differentiate_weights(opt, oa_dstate, oe_dstate):
     return suspicious
 
 
+def backprob_indirection(opt, model, ckp, datasets, dataloaders, device):
+    oa_dstate = overall_improve(opt, model, ckp, dataloaders, device)
+    oe_dstate = error_bias_improve(opt, model, ckp, datasets, dataloaders, device)
+
+    susp_filters = differentiate_weights(opt, oa_dstate, oe_dstate)
+    return susp_filters
+
+
+def extract_feature_map(lname, model, dataloader, device):
+    feature_map = []
+
+    def _hook(module, finput, foutput):
+        feature_map.append(foutput.detach().cpu())
+
+    module = rgetattr(model, lname)
+    handle = module.register_forward_hook(_hook)
+
+    criterion = torch.nn.CrossEntropyLoss()
+    base_acc, (_, trg_labels) = eval(
+        model, dataloader, criterion, device, desc="Evaluate", return_label=True)
+    feature_map = torch.cat(feature_map, dim=0)
+
+    handle.remove()
+
+    return feature_map, trg_labels, base_acc
+
+# TODO: unfinished
+def performance_swap(opt, model, datasets, dataloaders, device):
+    trainloader, _, _, = dataloaders
+    classloader = construct_error_bias_dataloader(opt, model, datasets, dataloaders, device)
+
+    model2 = copy.deepcopy(model).to(device)
+
+    for lname, module in tqdm(model2.named_modules(), desc=" Modules"):
+        if isinstance(module, nn.Conv2d):
+            print("[info] Extracting feature map of {} layer".format(lname))
+            fmap, trgs, base_acc = extract_feature_map(lname, model2, trainloader, device)
+
+            def _substitute_feature(filter_index):
+                def __hook(module, finput, foutput):
+                    foutput[filter_index] = fmap[filter_index]
+                return __hook
+
+            for fidx in tqdm(range(module.out_channels), desc=" Filters", leave=False):
+                module.register_forward_hook(_substitute_feature(fidx))
+
+                correct, total = 0, 0
+                with tqdm(classloader, desc="    Swap") as tepoch:
+                    for inputs, targets in tepoch:
+                        proc_trgs = targets
+                        inputs, targets = inputs.to(device), targets.to(device)
+                        outputs = model2(inputs)
+
+                        _, predicted = outputs.max(1)
+                        total += targets.size(0)
+                        correct += predicted.eq(targets).sum().item()
+
+                        acc = 100. * correct / total
+                        tepoch.set_postfix(acc=acc)
+                acc = 100. * correct / total
+
+        break
+
+    return None
+
+
 def main():
     opt = parser.parse_args()
     print(opt)
@@ -105,13 +186,22 @@ def main():
     device = torch.device(opt.device if torch.cuda.is_available() else "cpu")
     model, ckp = resume_model(opt)
     datasets, dataloaders = load_dataset(opt, return_set=True)
+    opt.classes = datasets[2].classes
 
-    oa_dstate = overall_improve(opt, model, ckp, dataloaders, device)
-    oe_dstate = error_bias_improve(opt, model, ckp, datasets, dataloaders, device)
+    if opt.fs_method == "bpindiret":
+        susp_filters = backprob_indirection(
+            opt, model, ckp, datasets, dataloaders, device
+        )
+    elif opt.fs_method == "perfswap":
+        raise RuntimeError("unfinished implementation")
+        #  susp_filters = performance_swap(
+        #      opt, model, datasets, dataloaders, device
+        #  )
+    else:
+        raise ValueError("Error of filter selection method.")
 
-    suspicious_filters = differentiate_weights(opt, oa_dstate, oe_dstate)
-    preview_object(suspicious_filters)
-    export_object(opt, "suspicious_filters.json", suspicious_filters)
+    preview_object(susp_filters)
+    export_object(opt, "suspicious_filters.json", susp_filters)
 
 
 if __name__ == "__main__":

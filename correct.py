@@ -1,6 +1,5 @@
 import os
 import json
-import functools
 
 import torch
 import torch.nn as nn
@@ -52,19 +51,6 @@ class ConvCorrect(nn.Module):
         return out
 
 
-# borrow from: https://stackoverflow.com/questions/31174295/
-#   getattr-and-setattr-on-nested-subobjects-chained-properties/31174427#31174427
-def rsetattr(obj, attr, val):
-    pre, _, post = attr.rpartition('.')
-    return setattr(rgetattr(obj, pre) if pre else obj, post, val)
-
-
-def rgetattr(obj, attr, *args):
-    def _getattr(obj, attr):
-        return getattr(obj, attr, *args)
-    return functools.reduce(_getattr, [obj] + attr.split('.'))
-
-
 def construct_model(opt, model):
     sus_filters = json.load(open(os.path.join(
         opt.output_dir, opt.dataset, opt.model, "suspicious_filters.json"
@@ -97,7 +83,7 @@ def main():
     for epoch in range(0, opt.correct_epoch):
         print("Epoch: {}".format(epoch))
         train(model, trainloader, optimizer, criterion, device)
-        acc, _ = eval(model, testloader, criterion, device)
+        acc = eval(model, testloader, criterion, device)
         if acc > best_acc:
             print("Saving...")
             state = {
