@@ -15,27 +15,29 @@ def guard_folder(opt, folder=None):
         folder = []
     elif isinstance(folder, str):
         folder = [folder]
-    path = os.path.join(opt.output_dir, opt.dataset, opt.model)
-    folder.append(path)
+    folder.append(os.path.join(opt.output_dir, opt.dataset, opt.model))
     for f in folder:
         if not os.path.isdir(f):
             os.makedirs(f)
 
 
-def cache_object(opt, filename, func, *args, **kwargs):
-    mode = 'b' if filename.endswith('.pkl') else ''
-    filepath = os.path.join(opt.cache_dir, f"{opt.dataset}_{opt.model}_{filename}")
-    if os.path.exists(filepath):
-        with open(filepath, f'r{mode}') as f:
-            obj = pickle.load(f) if mode == 'b' else json.load(f)
-    else:
-        obj = func(*args, **kwargs)
-        with open(filepath, f'w{mode}') as f:
-            if mode == 'b':
-                pickle.dump(obj, f)
-            else:
-                json.dump(obj, f, indent=2, ensure_ascii=False)
-    return obj
+def cache_object(filename):
+    def _decorator(func):
+        def __func_wrapper(*args, **kwargs):
+            cache_dir = args[0].cache_dir if hasattr(args[0], 'cache_dir') else 'cache'
+            filepath = os.path.join(cache_dir, filename)
+            try:
+                cache = pickle.load(open(filepath, 'rb'))
+            except IOError:
+                cache = None
+            if cache is None:
+                cache = func(*args, **kwargs)
+                if not os.path.isdir(cache_dir):
+                    os.makedirs(cache_dir)
+                pickle.dump(cache, open(filepath, 'wb'))
+            return cache
+        return __func_wrapper
+    return _decorator
 
 
 def preview_object(obj):

@@ -40,11 +40,11 @@ def train(
 @torch.no_grad()
 def eval(
         model, valloader, criterion, device,
-        desc="Evaluate", return_label=False):
+        desc="Evaluate", return_label=False, tqdm_leave=True):
     model.eval()
     test_loss, correct, total = 0, 0, 0
     pred_labels, trg_labels = [], []
-    with tqdm(valloader, desc=desc) as tepoch:
+    with tqdm(valloader, desc=desc, leave=tqdm_leave) as tepoch:
         for batch_idx, (inputs, targets) in enumerate(tepoch):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = model(inputs)
@@ -70,7 +70,7 @@ def eval(
         trg_labels = torch.cat(trg_labels)
         return acc, (pred_labels, trg_labels)
 
-    return acc
+    return acc, (None, None)
 
 
 def main():
@@ -79,7 +79,7 @@ def main():
     guard_folder(opt)
 
     device = torch.device(opt.device if torch.cuda.is_available() else "cpu")
-    trainloader, _, testloader = load_dataset(opt)
+    _, (trainloader, _, testloader) = load_dataset(opt)
     model = load_model(opt).to(device)
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(
@@ -101,7 +101,7 @@ def main():
     for epoch in range(start_epoch + 1, opt.max_epoch):
         print("Epoch: {}".format(epoch))
         train(model, trainloader, optimizer, criterion, device)
-        acc = eval(model, testloader, criterion, device)
+        acc, _ = eval(model, testloader, criterion, device)
         if acc > best_acc:
             print("Saving...")
             state = {

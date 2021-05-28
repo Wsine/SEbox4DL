@@ -4,6 +4,8 @@ import json
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import pandas as pd
+from sklearn.metrics import confusion_matrix
 
 from model import resume_model
 from dataset import load_dataset
@@ -62,16 +64,12 @@ def construct_model(opt, model):
     return model
 
 
-def main():
-    opt = parser.parse_args()
-    print(opt)
+def retrain(opt, model, ckp, dataloaders, device):
+    trainloader, _, testloader = dataloaders
 
-    device = torch.device(opt.device if torch.cuda.is_available() else "cpu")
-    model, ckp = resume_model(opt)
     model = construct_model(opt, model)
     model = model.to(device)
 
-    trainloader, _, testloader = load_dataset(opt)
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(
         model.parameters(),
@@ -83,7 +81,7 @@ def main():
     for epoch in range(0, opt.correct_epoch):
         print("Epoch: {}".format(epoch))
         train(model, trainloader, optimizer, criterion, device)
-        acc = eval(model, testloader, criterion, device)
+        acc, *_ = eval(model, testloader, criterion, device)
         if acc > best_acc:
             print("Saving...")
             state = {
@@ -97,6 +95,86 @@ def main():
             torch.save(state, get_model_path(opt, state="correct"))
             best_acc = acc
         scheduler.step()
+
+
+def patch(opt, model, dataloaders, device):
+    _, _, testloader = dataloaders
+    model = model.to(device)
+
+    criterion = torch.nn.CrossEntropyLoss()
+    base_acc, (preds, trgs) = eval(model, testloader, criterion, device, return_label=True)
+    print("Base accuracy is {:.4f}%".format(base_acc))
+    base_corrs = preds.eq(trgs)
+
+    feat_err_prob = pickle.load(open(os.path.join(
+        opt.output_dir, opt.dataset, opt.model, "feature_error_probability.pkl"
+    ), "rb"))
+
+    decision_wgt = []
+
+    def _adjust_features(layer_name):
+        def __hook(module, finput, foutput):
+            zero_output = torch.zeros(foutput.size(), device=device)
+            ones_output = torch.ones(foutput.size(), device=device)
+
+            layer_eprob = feat_err_prob[layer_name].to(device)
+            err_prob = torch.stack(foutput.size(0) * [layer_eprob])
+            relu_out = torch.nn.functional.relu(foutput)
+
+            act_wgt = torch.where(relu_out > 0, err_prob, zero_output) \
+                           .view(relu_out.size(0), -1).mean(dim=1)
+            nonact_wgt = torch.where(relu_out <= 0, err_prob, zero_output) \
+                           .view(relu_out.size(0), -1).mean(dim=1)
+
+            decision_wgt.append((act_wgt > nonact_wgt).cpu())
+            wgt_mask = torch.stack([ones_output[0] if larger else zero_output[0]
+                                    for larger in (act_wgt > nonact_wgt)])
+            prune_mask = torch.bernoulli(torch.clamp(err_prob, min=0., max=1.))
+            act_mask = (relu_out > 0)
+            comb_mask = torch.logical_and(prune_mask, torch.logical_and(wgt_mask, act_mask))
+            return torch.where(comb_mask, zero_output, foutput)
+        return __hook
+
+    #  for lname, module in model.named_modules():
+    #      if isinstance(module, nn.BatchNorm2d):
+    #          module.register_forward_hook(_adjust_features(lname))
+    #          break
+
+    n, m = None, None
+    for lname, module in model.named_modules():
+        if isinstance(module, nn.BatchNorm2d):
+            n, m = lname, module
+    m.register_forward_hook(_adjust_features(n))
+
+
+    acc, (preds, trgs) = eval(model, testloader, criterion, device, return_label=True)
+    print("Patch accuracy is {:.4f}%".format(acc))
+    corrs = preds.eq(trgs)
+
+    decision_wgt = torch.cat(decision_wgt, dim=0)
+    cf_matrix = confusion_matrix(base_corrs, decision_wgt)
+    df = pd.DataFrame(cf_matrix/cf_matrix.sum(), index=[0, 1], columns=[0, 1])
+    print("Decison Confusion Matrix:\n", df)
+
+    cf_matrix = confusion_matrix(base_corrs, corrs)
+    df = pd.DataFrame(cf_matrix/cf_matrix.sum(), index=[0, 1], columns=[0, 1])
+    print("Prediction Confusion Matrix:\n", df)
+
+
+def main():
+    opt = parser.parse_args()
+    print(opt)
+
+    device = torch.device(opt.device if torch.cuda.is_available() else "cpu")
+    model, ckp = resume_model(opt)
+    _, dataloaders = load_dataset(opt)
+
+    if opt.fs_method in ("bpindiret", "perfswap"):
+        retrain(opt, model, ckp, dataloaders, device)
+    elif opt.fs_method == "featweight":
+        patch(opt, model, dataloaders, device)
+    else:
+        raise ValueError("Invalid method")
 
 
 if __name__ == "__main__":

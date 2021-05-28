@@ -131,13 +131,15 @@ def extract_feature_map(lname, model, dataloader, device):
     handle = module.register_forward_hook(_hook)
 
     criterion = torch.nn.CrossEntropyLoss()
-    base_acc, (_, trg_labels) = eval(
-        model, dataloader, criterion, device, desc="Evaluate", return_label=True)
+    base_acc, (pred_labels, trg_labels) = eval(
+        model, dataloader, criterion, device,
+        desc="Evaluate", return_label=True, tqdm_leave=False)
     feature_map = torch.cat(feature_map, dim=0)
 
     handle.remove()
 
-    return feature_map, trg_labels, base_acc
+    return feature_map, (pred_labels, trg_labels), base_acc
+
 
 # TODO: unfinished
 def performance_swap(opt, model, datasets, dataloaders, device):
@@ -149,7 +151,7 @@ def performance_swap(opt, model, datasets, dataloaders, device):
     for lname, module in tqdm(model2.named_modules(), desc=" Modules"):
         if isinstance(module, nn.Conv2d):
             print("[info] Extracting feature map of {} layer".format(lname))
-            fmap, trgs, base_acc = extract_feature_map(lname, model2, trainloader, device)
+            fmap, (_, trgs), base_acc = extract_feature_map(lname, model2, trainloader, device)
 
             def _substitute_feature(filter_index):
                 def __hook(module, finput, foutput):
@@ -179,29 +181,73 @@ def performance_swap(opt, model, datasets, dataloaders, device):
     return None
 
 
+def feature_weighted(opt, model, dataloaders, device):
+    _, valloader, _, = dataloaders
+    num_classes = len(opt.classes)
+
+    model2 = copy.deepcopy(model).to(device)
+
+    feat_err_prob = {}
+    num_modules = sum(1 for _ in model2.modules())
+    for lname, module in tqdm(model2.named_modules(), total=num_modules, desc="Weighting"):
+        if isinstance(module, nn.BatchNorm2d):
+            fmaps, (preds, trgs), _ = extract_feature_map(lname, model2, valloader, device)
+            fmaps = torch.nn.functional.relu(fmaps)
+
+            cls_err_matrix = []
+            for cls_i in range(num_classes):
+                cfmaps = fmaps[torch.logical_and(trgs == cls_i, preds == trgs)]
+                efmaps = fmaps[torch.logical_and(trgs == cls_i, preds != trgs)]
+                cweights = (cfmaps > 0).sum(dim=0).div(cfmaps.size(0))
+                eweights = (efmaps > 0).sum(dim=0).div(efmaps.size(0))
+                clsi_err_mat = torch.mul(cweights, eweights)
+                cls_err_matrix.append(clsi_err_mat)
+            cls_err_matrix = torch.stack(cls_err_matrix, dim=0)
+
+            cls_weighted = torch.stack(
+                [(trgs == i).sum() for i in range(len(opt.classes))]
+            ).div(trgs.numel())
+            err_matrix = cls_err_matrix \
+                .view(num_classes, -1) \
+                .mul(cls_weighted.view(num_classes, 1)) \
+                .view(cls_err_matrix.size()) \
+                .sum(dim=0)
+
+            feat_err_prob[lname] = err_matrix
+
+    return feat_err_prob
+
+
 def main():
     opt = parser.parse_args()
     print(opt)
 
     device = torch.device(opt.device if torch.cuda.is_available() else "cpu")
     model, ckp = resume_model(opt)
-    datasets, dataloaders = load_dataset(opt, return_set=True)
+    datasets, dataloaders = load_dataset(opt, return_set=True, return_loader=True)
     opt.classes = datasets[2].classes
 
     if opt.fs_method == "bpindiret":
-        susp_filters = backprob_indirection(
+        result = backprob_indirection(
             opt, model, ckp, datasets, dataloaders, device
         )
+        result_name = "susp_filters.json"
+        preview_object(result)
     elif opt.fs_method == "perfswap":
         raise RuntimeError("unfinished implementation")
-        #  susp_filters = performance_swap(
+        #  result = performance_swap(
         #      opt, model, datasets, dataloaders, device
         #  )
+        result_name = "susp_filters.json"
+    elif opt.fs_method == "featweight":
+        result = feature_weighted(
+            opt, model, dataloaders, device
+        )
+        result_name = "feature_error_probability.pkl"
     else:
-        raise ValueError("Error of filter selection method.")
+        raise ValueError("Invalid method")
 
-    preview_object(susp_filters)
-    export_object(opt, "suspicious_filters.json", susp_filters)
+    export_object(opt, result_name, result)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ import argparse
 devices = ["cpu", "cuda"]
 datasets = ["cifar10", "cifar100"]
 models = ["resnet34", "resnet50"]
-fsmethods = ["bpindiret", "perfswap"]
+fsmethods = ["bpindiret", "perfswap", "featweight"]
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", default="data")
@@ -19,8 +19,8 @@ optim_group = parser.add_argument_group('optimizer')
 optim_group.add_argument("--lr", type=float, default=0.01, help="learning rate")
 optim_group.add_argument("--momentum", type=float, default=0.9)
 optim_group.add_argument("--weight_decay", type=float, default=5e-4)
-select_group = parser.add_argument_group('filter_selection')
-select_group.add_argument("--fs_method", type=str, default="bpindiret", choices=fsmethods)
+select_group = parser.add_argument_group('selection')
+select_group.add_argument("--fs_method", type=str, default="featweight", choices=fsmethods)
 select_group.add_argument("--mask_smallest_ratio", type=float, default=0.1)
 select_group.add_argument("--suspicious_ratio", type=float, default=0.05)
 correct_group = parser.add_argument_group('correct')
