@@ -28,6 +28,7 @@ def cache_object(filename):
             filepath = os.path.join(cache_dir, filename)
             try:
                 cache = pickle.load(open(filepath, 'rb'))
+                print('[info] {} cache hit'.format(func.__name__))
             except IOError:
                 cache = None
             if cache is None:

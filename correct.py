@@ -97,6 +97,7 @@ def retrain(opt, model, ckp, dataloaders, device):
         scheduler.step()
 
 
+@torch.no_grad()
 def patch(opt, model, dataloaders, device):
     _, _, testloader = dataloaders
     model = model.to(device)
@@ -106,59 +107,35 @@ def patch(opt, model, dataloaders, device):
     print("Base accuracy is {:.4f}%".format(base_acc))
     base_corrs = preds.eq(trgs)
 
-    feat_err_prob = pickle.load(open(os.path.join(
+    cls_err_matrix = pickle.load(open(os.path.join(
         opt.output_dir, opt.dataset, opt.model, "feature_error_probability.pkl"
     ), "rb"))
+    cls_err_matrix = cls_err_matrix.to(device)
+    num_classes = cls_err_matrix.size(0)
 
-    decision_wgt = []
+    least_err_index = []
+    def _hook(module, finput, foutput):
+        batch_size = foutput.size(0)
+        features = foutput[:, None, :, :, :].repeat(1, num_classes, 1, 1, 1)
+        err_prob = cls_err_matrix.repeat(batch_size, 1, 1, 1, 1)
+        reluout = torch.nn.functional.relu(features)
+        mask_prob = torch.where(reluout > 0, err_prob, torch.zeros_like(err_prob))
+        _, least_err_idx = mask_prob.abs().sum(dim=[2, 3, 4]).topk(1, largest=False)
+        least_err_index.append(least_err_idx.cpu())
 
-    def _adjust_features(layer_name):
-        def __hook(module, finput, foutput):
-            zero_output = torch.zeros(foutput.size(), device=device)
-            ones_output = torch.ones(foutput.size(), device=device)
-
-            layer_eprob = feat_err_prob[layer_name].to(device)
-            err_prob = torch.stack(foutput.size(0) * [layer_eprob])
-            relu_out = torch.nn.functional.relu(foutput)
-
-            act_wgt = torch.where(relu_out > 0, err_prob, zero_output) \
-                           .view(relu_out.size(0), -1).mean(dim=1)
-            nonact_wgt = torch.where(relu_out <= 0, err_prob, zero_output) \
-                           .view(relu_out.size(0), -1).mean(dim=1)
-
-            decision_wgt.append((act_wgt > nonact_wgt).cpu())
-            wgt_mask = torch.stack([ones_output[0] if larger else zero_output[0]
-                                    for larger in (act_wgt > nonact_wgt)])
-            prune_mask = torch.bernoulli(torch.clamp(err_prob, min=0., max=1.))
-            act_mask = (relu_out > 0)
-            comb_mask = torch.logical_and(prune_mask, torch.logical_and(wgt_mask, act_mask))
-            return torch.where(comb_mask, zero_output, foutput)
-        return __hook
-
-    #  for lname, module in model.named_modules():
-    #      if isinstance(module, nn.BatchNorm2d):
-    #          module.register_forward_hook(_adjust_features(lname))
-    #          break
-
-    n, m = None, None
-    for lname, module in model.named_modules():
+    m = None
+    for module in model.modules():
         if isinstance(module, nn.BatchNorm2d):
-            n, m = lname, module
-    m.register_forward_hook(_adjust_features(n))
+            m = module
+    m.register_forward_hook(_hook)
 
+    _, (preds, _) = eval(model, testloader, criterion, device, return_label=True)
 
-    acc, (preds, trgs) = eval(model, testloader, criterion, device, return_label=True)
-    print("Patch accuracy is {:.4f}%".format(acc))
-    corrs = preds.eq(trgs)
-
-    decision_wgt = torch.cat(decision_wgt, dim=0)
-    cf_matrix = confusion_matrix(base_corrs, decision_wgt)
-    df = pd.DataFrame(cf_matrix/cf_matrix.sum(), index=[0, 1], columns=[0, 1])
-    print("Decison Confusion Matrix:\n", df)
-
-    cf_matrix = confusion_matrix(base_corrs, corrs)
-    df = pd.DataFrame(cf_matrix/cf_matrix.sum(), index=[0, 1], columns=[0, 1])
-    print("Prediction Confusion Matrix:\n", df)
+    least_err_index = torch.cat(least_err_index, dim=0)
+    decision_corrs = preds.view(-1, 1).eq(least_err_index).sum(dim=1)
+    cf_mat = confusion_matrix(base_corrs, decision_corrs)
+    df = pd.DataFrame(cf_mat/cf_mat.sum(), index=[0, 1], columns=[0, 1])
+    print("Decison Confusion Matrix:\n{}".format(df))
 
 
 def main():

@@ -187,35 +187,27 @@ def feature_weighted(opt, model, dataloaders, device):
 
     model2 = copy.deepcopy(model).to(device)
 
-    feat_err_prob = {}
-    num_modules = sum(1 for _ in model2.modules())
-    for lname, module in tqdm(model2.named_modules(), total=num_modules, desc="Weighting"):
+    layer_name = None
+    for lname, module in model2.named_modules():
         if isinstance(module, nn.BatchNorm2d):
-            fmaps, (preds, trgs), _ = extract_feature_map(lname, model2, valloader, device)
-            fmaps = torch.nn.functional.relu(fmaps)
+            layer_name = lname
 
-            cls_err_matrix = []
-            for cls_i in range(num_classes):
-                cfmaps = fmaps[torch.logical_and(trgs == cls_i, preds == trgs)]
-                efmaps = fmaps[torch.logical_and(trgs == cls_i, preds != trgs)]
-                cweights = (cfmaps > 0).sum(dim=0).div(cfmaps.size(0))
-                eweights = (efmaps > 0).sum(dim=0).div(efmaps.size(0))
-                clsi_err_mat = torch.mul(cweights, eweights)
-                cls_err_matrix.append(clsi_err_mat)
-            cls_err_matrix = torch.stack(cls_err_matrix, dim=0)
+    fmaps, (preds, trgs), _ = extract_feature_map(layer_name, model2, valloader, device)
+    fmaps = torch.nn.functional.relu(fmaps)
 
-            cls_weighted = torch.stack(
-                [(trgs == i).sum() for i in range(len(opt.classes))]
-            ).div(trgs.numel())
-            err_matrix = cls_err_matrix \
-                .view(num_classes, -1) \
-                .mul(cls_weighted.view(num_classes, 1)) \
-                .view(cls_err_matrix.size()) \
-                .sum(dim=0)
+    cls_err_matrix = []
+    for cls_i in range(num_classes):
+        cfmaps = fmaps[torch.logical_and(trgs == cls_i, preds == trgs)]
+        efmaps = fmaps[torch.logical_and(trgs == cls_i, preds != trgs)]
+        cweights = (cfmaps > 0).sum(dim=0).div(cfmaps.size(0))
+        eweights = (efmaps > 0).sum(dim=0).div(efmaps.size(0))
+        clsi_err_mat = torch.sub(cweights, eweights)
+        cls_err_matrix.append(clsi_err_mat)
+    cls_err_matrix = torch.stack(cls_err_matrix, dim=0)
 
-            feat_err_prob[lname] = err_matrix
+    print("[info] Done of weighting the feature activations")
 
-    return feat_err_prob
+    return cls_err_matrix
 
 
 def main():
