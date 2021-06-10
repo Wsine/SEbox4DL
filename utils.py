@@ -2,6 +2,7 @@ import os
 import json
 import pickle
 import functools
+import hashlib
 
 
 def get_model_path(opt, state="best"):
@@ -21,6 +22,14 @@ def guard_folder(opt, folder=None):
             os.makedirs(f)
 
 
+def dict_hash(dictionary):
+    """MD5 hash of a dictionary."""
+    dhash = hashlib.md5()
+    encoded = json.dumps(dictionary, sort_keys=True).encode()
+    dhash.update(encoded)
+    return dhash.hexdigest()
+
+
 def cache_object(filename):
     def _decorator(func):
         def __func_wrapper(*args, **kwargs):
@@ -28,15 +37,17 @@ def cache_object(filename):
             filepath = os.path.join(cache_dir, filename)
             try:
                 cache = pickle.load(open(filepath, 'rb'))
-                print('[info] {} cache hit'.format(func.__name__))
             except IOError:
-                cache = None
-            if cache is None:
-                cache = func(*args, **kwargs)
+                cache = {}
+            paramskey = dict_hash(kwargs)
+            if paramskey not in cache:
+                cache[paramskey] = func(*args, **kwargs)
                 if not os.path.isdir(cache_dir):
                     os.makedirs(cache_dir)
                 pickle.dump(cache, open(filepath, 'wb'))
-            return cache
+            else:
+                print('[info] {} cache hit'.format(func.__name__))
+            return cache[paramskey]
         return __func_wrapper
     return _decorator
 

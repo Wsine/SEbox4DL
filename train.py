@@ -90,13 +90,21 @@ def main():
 
     start_epoch = -1
     best_acc = 0
-    if opt.resume:
-        ckp = torch.load(get_model_path(opt))
+    if opt.resume or opt.eval:
+        ckp = torch.load(get_model_path(opt, state="primeval"))
         model.load_state_dict(ckp["net"])
         optimizer.load_state_dict(ckp["optim"])
         scheduler.load_state_dict(ckp["sched"])
         start_epoch = ckp["epoch"]
         best_acc = ckp["acc"]
+
+    if opt.eval:
+        acc, _ = eval(model, testloader, criterion, device)
+        print("[info] the base accuracy is {:.4f}%".format(acc))
+        _, (_, _, perturbloader) = load_dataset(opt, noise=(False, True))
+        acc, _ = eval(model, perturbloader, criterion, device)
+        print("[info] the robustness accuracy is {:.4f}%".format(acc))
+        return
 
     for epoch in range(start_epoch + 1, opt.max_epoch):
         print("Epoch: {}".format(epoch))
@@ -111,7 +119,7 @@ def main():
                 "sched": scheduler.state_dict(),
                 "acc": acc
             }
-            torch.save(state, get_model_path(opt))
+            torch.save(state, get_model_path(opt, state="primeval"))
             best_acc = acc
         scheduler.step()
 
