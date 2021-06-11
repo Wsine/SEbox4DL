@@ -7,16 +7,8 @@ from arguments import parser
 from utils import *
 
 
-def train(
-        model, trainloader, optimizer, criterion, device,
-        desc="   Train", partial=None):
-    if partial:
-        model.eval()
-        for m in model.modules():
-            if any([isinstance(m, p) for p in partial]):
-                m.train()
-    else:
-        model.train()
+def train(model, trainloader, optimizer, criterion, device, desc="   Train"):
+    model.train()
     train_loss, correct, total = 0, 0, 0
     with tqdm(trainloader, desc=desc) as tepoch:
         for batch_idx, (inputs, targets) in enumerate(tepoch):

@@ -14,9 +14,9 @@ from train import train, eval
 from utils import *
 
 
-class CorrectUnit(nn.Module):
+class CorrectionUnit(nn.Module):
     def __init__(self, num_filters, Di, k):
-        super(CorrectUnit, self).__init__()
+        super(CorrectionUnit, self).__init__()
         self.conv1 = nn.Conv2d(
             num_filters, Di, kernel_size=1, stride=1, padding=0, bias=False)
         self.bn1 = nn.BatchNorm2d(Di)
@@ -28,14 +28,16 @@ class CorrectUnit(nn.Module):
         self.bn3 = nn.BatchNorm2d(Di)
         self.conv4 = nn.Conv2d(
             Di, num_filters, kernel_size=1, stride=1, padding=0, bias=False)
+        self.shortcut = nn.Sequential()
+        self.sum_bn = nn.BatchNorm2d(num_filters)
 
     def forward(self, x):
-        residual = x
         out = F.relu(self.bn1(self.conv1(x)))
         out = F.relu(self.bn2(self.conv2(out)))
         out = F.relu(self.bn3(self.conv3(out)))
         out = self.conv4(out)
-        out += residual
+        out += self.shortcut(x)
+        out = self.sum_bn(out)
         return out
 
 
@@ -45,7 +47,7 @@ class ConvCorrect(nn.Module):
         self.indices = indices
         self.conv = conv_layer
         num_filters = len(indices)
-        self.cru = CorrectUnit(num_filters, num_filters, 3)
+        self.cru = CorrectionUnit(num_filters, num_filters, 3)
 
     def forward(self, x):
         out = self.conv(x)
@@ -69,15 +71,22 @@ def retrain(opt, model, ckp, dataloaders, device):
 
     model = construct_model(opt, model)
     model = model.to(device)
+    for name, module in model.named_modules():
+        if "cru" in name:
+            for param in module.parameters():
+                param.requires_grad = True
+        else:
+            for param in module.parameters():
+                param.requires_grad = False
 
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(
-        model.parameters(),
+        filter(lambda p: p.requires_grad, model.parameters()),
         lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
-    best_acc = ckp["acc"]
+    best_acc, *_ = eval(model, testloader, criterion, device, desc="Baseline")
     for epoch in range(0, opt.correct_epoch):
         print("Epoch: {}".format(epoch))
         train(model, trainloader, optimizer, criterion, device)
@@ -95,6 +104,7 @@ def retrain(opt, model, ckp, dataloaders, device):
             torch.save(state, get_model_path(opt, state="correct"))
             best_acc = acc
         scheduler.step()
+    print("[info] the best accuracy is {:.4f}%".format(best_acc))
 
 
 @torch.no_grad()
@@ -143,12 +153,12 @@ def main():
     print(opt)
 
     device = torch.device(opt.device if torch.cuda.is_available() else "cpu")
-    model, ckp = resume_model(opt)
-    _, dataloaders = load_dataset(opt)
+    model, ckp = resume_model(opt, state="primeval")
+    _, dataloaders = load_dataset(opt, noise=(True, True))
 
-    if opt.fs_method in ("bpindiret", "perfswap"):
+    if opt.fs_method in ("bpindiret", "featswap", "wgtchange"):
         retrain(opt, model, ckp, dataloaders, device)
-    elif opt.fs_method == "featweight":
+    elif opt.fs_method == "featwgting":
         patch(opt, model, dataloaders, device)
     else:
         raise ValueError("Invalid method")

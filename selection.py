@@ -36,7 +36,8 @@ def overall_improve(opt, model, ckp, dataloaders, device):
 
 def construct_error_bias_dataloader(opt, model, datasets, dataloaders, device):
     trainset, valset, _ = datasets
-    _, valloader, _ = dataloaders
+    _, valloader, testloader = dataloaders
+    num_classes = len(testloader.classes)
 
     model2 = copy.deepcopy(model).to(device)
 
@@ -45,7 +46,7 @@ def construct_error_bias_dataloader(opt, model, datasets, dataloaders, device):
         model2, valloader, criterion, device, desc=" Extract", return_label=True)
     pred_result = pred_labels.eq(trg_labels).tolist()
 
-    class_weights = [0 for _ in range(len(opt.classes))]
+    class_weights = [0 for _ in range(num_classes)]
     for sample, pred in zip(valset, pred_result):
         if not pred:
             _, label = sample
@@ -113,7 +114,9 @@ def differentiate_weights(opt, oa_dstate, oe_dstate):
     return suspicious
 
 
-def backprob_indirection(opt, model, ckp, datasets, dataloaders, device):
+def backprob_indirection(opt, model, ckp, device):
+    datasets, dataloaders = load_dataset(opt, return_set=True, return_loader=True)
+
     oa_dstate = overall_improve(opt, model, ckp, dataloaders, device)
     oe_dstate = error_bias_improve(opt, model, ckp, datasets, dataloaders, device)
 
@@ -142,7 +145,8 @@ def extract_feature_map(lname, model, dataloader, device):
 
 
 # TODO: unfinished
-def performance_swap(opt, model, datasets, dataloaders, device):
+def featuremap_swap(opt, model, device):
+    datasets, dataloaders = load_dataset(opt, return_set=True, return_loader=True)
     trainloader, _, _, = dataloaders
     classloader = construct_error_bias_dataloader(opt, model, datasets, dataloaders, device)
 
@@ -181,9 +185,9 @@ def performance_swap(opt, model, datasets, dataloaders, device):
     return None
 
 
-def feature_weighted(opt, model, dataloaders, device):
-    _, valloader, _, = dataloaders
-    num_classes = len(opt.classes)
+def feature_weighting(opt, model, device):
+    _, (_, valloader, testloader) = load_dataset(opt)
+    num_classes = len(testloader.classes)
 
     model2 = copy.deepcopy(model).to(device)
 
@@ -210,32 +214,66 @@ def feature_weighted(opt, model, dataloaders, device):
     return cls_err_matrix
 
 
+def weight_change(opt, model, ckp, device):
+    _, (_, valloader, testloader) = load_dataset(opt, noise=(True, True))
+    model2 = copy.deepcopy(model).to(device)
+    origin_state = model2.state_dict()
+
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(
+        model2.parameters(),
+        lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
+
+    optimizer.load_state_dict(ckp["optim"])
+    scheduler.load_state_dict(ckp["sched"])
+
+    best_acc = 0
+    for epoch in range(5):
+        print("Calibrate epoch: {}".format(epoch))
+        train(model2, valloader, optimizer, criterion, device)
+        acc, _ = eval(model2, testloader, criterion, device)
+        if acc > best_acc:
+            updated_state = model2.state_dict()
+            best_acc = acc
+        scheduler.step()
+
+    suspicious = {}
+    for k in updated_state.keys():
+        if not "conv" in k: continue
+        num_filters = updated_state[k].size(0)
+        diff_state = updated_state[k] - origin_state[k]
+        sum_change = diff_state.abs().view(num_filters, -1).sum(dim=1)
+        r = opt.suspicious_ratio
+        indices = sum_change.topk((int)(num_filters*r)).indices
+        suspicious[k] = indices.tolist()
+
+    return suspicious
+
+
 def main():
     opt = parser.parse_args()
     print(opt)
 
     device = torch.device(opt.device if torch.cuda.is_available() else "cpu")
-    model, ckp = resume_model(opt)
-    datasets, dataloaders = load_dataset(opt, return_set=True, return_loader=True)
-    opt.classes = datasets[2].classes
+    model, ckp = resume_model(opt, state="primeval")
 
     if opt.fs_method == "bpindiret":
-        result = backprob_indirection(
-            opt, model, ckp, datasets, dataloaders, device
-        )
+        result = backprob_indirection(opt, model, ckp, device)
         result_name = "susp_filters.json"
         preview_object(result)
-    elif opt.fs_method == "perfswap":
+    elif opt.fs_method == "featswap":
         raise RuntimeError("unfinished implementation")
-        #  result = performance_swap(
-        #      opt, model, datasets, dataloaders, device
-        #  )
-        result_name = "susp_filters.json"
-    elif opt.fs_method == "featweight":
-        result = feature_weighted(
-            opt, model, dataloaders, device
-        )
+        #  result = featuremap_swap(opt, model, device)
+        #  result_name = "susp_filters.json"
+    elif opt.fs_method == "featwgting":
+        result = feature_weighting(opt, model, device)
         result_name = "feature_error_probability.pkl"
+    elif opt.fs_method == "wgtchange":
+        result = weight_change(opt, model, ckp, device)
+        result_name = "susp_filters.json"
+        preview_object(result)
     else:
         raise ValueError("Invalid method")
 

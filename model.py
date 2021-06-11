@@ -16,10 +16,10 @@ def load_model(opt):
     else:
         raise ValueError("Invalid dataset name")
 
-def resume_model(opt):
+def resume_model(opt, state="best"):
     model = load_model(opt)
     ckp = torch.load(
-        get_model_path(opt),
+        get_model_path(opt, state=state),
         map_location=torch.device("cpu")
     )
     model.load_state_dict(ckp["net"])
