@@ -8,7 +8,10 @@ from sklearn.model_selection import train_test_split
 from utils import cache_object
 
 @cache_object(filename='dataset.pkl')
-def load_dataset(opt, return_set=False, return_loader=True, noise=(False, False)):
+def load_dataset(
+        opt,
+        return_set=False, return_loader=True,
+        noise=(False, False), prob=0.5):
     if not return_set and not return_loader:
         raise ValueError("One of return_set and return_loader should be true")
 
@@ -17,7 +20,10 @@ def load_dataset(opt, return_set=False, return_loader=True, noise=(False, False)
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
     ]
     noise_transformers = [
-        transforms.GaussianBlur(math.ceil(4*opt.gaussion_std)//2*2+1, sigma=opt.gaussion_std)
+        transforms.RandomApply(
+            [transforms.GaussianBlur(math.ceil(4*opt.gaussion_std)//2*2+1, sigma=opt.gaussion_std)],
+            p=prob
+        )
     ]
 
     train_transformers = (noise_transformers if noise[0] else []) + common_transformers

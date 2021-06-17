@@ -57,17 +57,17 @@ class ConvCorrect(nn.Module):
 
 def construct_model(opt, model):
     sus_filters = json.load(open(os.path.join(
-        opt.output_dir, opt.dataset, opt.model, "suspicious_filters.json"
+        opt.output_dir, opt.dataset, opt.model, "susp_filters.json"
     )))
-    for weights_name, indices in sus_filters.items():
-        layer_name = '.'.join(weights_name.split('.')[:-1])
+    for name, indices in sus_filters.items():
+        layer_name = name.rstrip(".weight")
         correct_unit = ConvCorrect(rgetattr(model, layer_name), indices)
         rsetattr(model, layer_name, correct_unit)
     return model
 
 
-def retrain(opt, model, ckp, dataloaders, device):
-    trainloader, _, testloader = dataloaders
+def retrain(opt, model, ckp, device):
+    _, (trainloader, _, testloader) = load_dataset(opt, noise=(True, True))
 
     model = construct_model(opt, model)
     model = model.to(device)
@@ -101,15 +101,23 @@ def retrain(opt, model, ckp, dataloaders, device):
                 "sched": scheduler.state_dict(),
                 "acc": acc
             }
-            torch.save(state, get_model_path(opt, state="correct"))
+            torch.save(state, get_model_path(opt, state=f"correct_{opt.fs_method}"))
             best_acc = acc
         scheduler.step()
-    print("[info] the best accuracy is {:.4f}%".format(best_acc))
+    print("[info] the best retrain accuracy is {:.4f}%".format(best_acc))
+
+    del trainloader, testloader
+    _, (_, _, testloader) = load_dataset(opt, noise=(False, False))
+    normal_acc, *_ = eval(model, testloader, criterion, device, desc="Normal")
+    print("[info] the normal accuracy is {:.4f}%".format(normal_acc))
+    _, (_, _, testloader) = load_dataset(opt, noise=(False, True), prob=1)
+    robust_acc, *_ = eval(model, testloader, criterion, device, desc="Robustness")
+    print("[info] the robustness accuracy is {:.4f}%".format(robust_acc))
 
 
 @torch.no_grad()
-def patch(opt, model, dataloaders, device):
-    _, _, testloader = dataloaders
+def patch(opt, model, device):
+    _, (_, _, testloader) = load_dataset(opt)
     model = model.to(device)
 
     criterion = torch.nn.CrossEntropyLoss()
@@ -154,12 +162,11 @@ def main():
 
     device = torch.device(opt.device if torch.cuda.is_available() else "cpu")
     model, ckp = resume_model(opt, state="primeval")
-    _, dataloaders = load_dataset(opt, noise=(True, True))
 
     if opt.fs_method in ("bpindiret", "featswap", "wgtchange"):
-        retrain(opt, model, ckp, dataloaders, device)
+        retrain(opt, model, ckp, device)
     elif opt.fs_method == "featwgting":
-        patch(opt, model, dataloaders, device)
+        patch(opt, model, device)
     else:
         raise ValueError("Invalid method")
 

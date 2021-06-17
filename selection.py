@@ -144,45 +144,65 @@ def extract_feature_map(lname, model, dataloader, device):
     return feature_map, (pred_labels, trg_labels), base_acc
 
 
-# TODO: unfinished
+@torch.no_grad()
 def featuremap_swap(opt, model, device):
-    datasets, dataloaders = load_dataset(opt, return_set=True, return_loader=True)
-    trainloader, _, _, = dataloaders
-    classloader = construct_error_bias_dataloader(opt, model, datasets, dataloaders, device)
-
+    _, (_, valloader1, _) = load_dataset(opt, noise=(False, False))
+    _, (_, valloader2, _) = load_dataset(opt, noise=(True, False), prob=1)
+    model1 = model.to(device)
     model2 = copy.deepcopy(model).to(device)
+    model1.eval()
+    model2.eval()
 
-    for lname, module in tqdm(model2.named_modules(), desc=" Modules"):
+    suspicious = {}
+    num_modules = len(list(model2.modules()))
+    for lname, module in tqdm(model2.named_modules(), total=num_modules, desc="Modules"):
         if isinstance(module, nn.Conv2d):
-            print("[info] Extracting feature map of {} layer".format(lname))
-            fmap, (_, trgs), base_acc = extract_feature_map(lname, model2, trainloader, device)
+            channel_feature = []
+            def _extract_feature(filter_index):
+                def __hook(module, finput, foutput):
+                    channel_feature.clear()
+                    channel_feature.append(foutput[:, filter_index])
+                return __hook
 
             def _substitute_feature(filter_index):
                 def __hook(module, finput, foutput):
-                    foutput[filter_index] = fmap[filter_index]
+                    foutput[:, filter_index] = channel_feature[-1]
+                    return foutput
                 return __hook
 
-            for fidx in tqdm(range(module.out_channels), desc=" Filters", leave=False):
-                module.register_forward_hook(_substitute_feature(fidx))
+            recover = []
+            for fidx in tqdm(range(module.out_channels), desc="Filters", leave=False):
+                handle1 = rgetattr(model1, lname).register_forward_hook(
+                    _extract_feature(fidx)
+                )
+                handle2 = rgetattr(model2, lname).register_forward_hook(
+                    _substitute_feature(fidx)
+                )
 
-                correct, total = 0, 0
-                with tqdm(classloader, desc="    Swap") as tepoch:
-                    for inputs, targets in tepoch:
-                        proc_trgs = targets
-                        inputs, targets = inputs.to(device), targets.to(device)
-                        outputs = model2(inputs)
+                total, correct1, correct2 = 0, 0, 0
+                for (inputs1, targets1), (inputs2, targets2) in zip(valloader1, valloader2):
+                    outputs1 = model1(inputs1.to(device))
+                    outputs2 = model2(inputs2.to(device))
 
-                        _, predicted = outputs.max(1)
-                        total += targets.size(0)
-                        correct += predicted.eq(targets).sum().item()
+                    total += targets1.size(0)
+                    _, predicted = outputs1.max(1)
+                    correct1 += predicted.cpu().eq(targets1).sum().item()
+                    _, predicted = outputs2.max(1)
+                    correct2 += predicted.cpu().eq(targets2).sum().item()
 
-                        acc = 100. * correct / total
-                        tepoch.set_postfix(acc=acc)
-                acc = 100. * correct / total
+                base_acc = 100. * correct1 / total
+                swap_acc = 100. * correct2 / total
+                recover.append(base_acc - swap_acc)
 
-        break
+                handle1.remove()
+                handle2.remove()
 
-    return None
+            topk = (int)(module.out_channels * opt.suspicious_ratio)
+            indices = sorted(range(len(recover)),
+                             key=lambda i: recover[i])[:topk]
+            suspicious[lname] = indices
+
+    return suspicious
 
 
 def feature_weighting(opt, model, device):
@@ -214,28 +234,33 @@ def feature_weighting(opt, model, device):
     return cls_err_matrix
 
 
-def weight_change(opt, model, ckp, device):
-    _, (_, valloader, testloader) = load_dataset(opt, noise=(True, True))
-    model2 = copy.deepcopy(model).to(device)
-    origin_state = model2.state_dict()
+def weight_change(opt, model, device):
+    _, (_, valloader, testloader) = load_dataset(opt, noise=(True, True), prob=1)
+    model = model.to(device)
+    origin_state = model.state_dict()
+
+    for module in model.modules():
+        if isinstance(module, nn.Conv2d):
+            for param in module.parameters():
+                param.requires_grad = True
+        else:
+            for param in module.parameters():
+                param.requires_grad = False
 
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(
-        model2.parameters(),
+        filter(lambda p: p.requires_grad, model.parameters()),
         lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
-    optimizer.load_state_dict(ckp["optim"])
-    scheduler.load_state_dict(ckp["sched"])
-
     best_acc = 0
     for epoch in range(5):
         print("Calibrate epoch: {}".format(epoch))
-        train(model2, valloader, optimizer, criterion, device)
-        acc, _ = eval(model2, testloader, criterion, device)
+        train(model, valloader, optimizer, criterion, device)
+        acc, _ = eval(model, testloader, criterion, device)
         if acc > best_acc:
-            updated_state = model2.state_dict()
+            updated_state = model.state_dict()
             best_acc = acc
         scheduler.step()
 
@@ -264,20 +289,19 @@ def main():
         result_name = "susp_filters.json"
         preview_object(result)
     elif opt.fs_method == "featswap":
-        raise RuntimeError("unfinished implementation")
-        #  result = featuremap_swap(opt, model, device)
-        #  result_name = "susp_filters.json"
+        result = featuremap_swap(opt, model, device)
+        result_name = "susp_filters.json"
     elif opt.fs_method == "featwgting":
         result = feature_weighting(opt, model, device)
         result_name = "feature_error_probability.pkl"
     elif opt.fs_method == "wgtchange":
-        result = weight_change(opt, model, ckp, device)
+        result = weight_change(opt, model, device)
         result_name = "susp_filters.json"
         preview_object(result)
     else:
         raise ValueError("Invalid method")
 
-    export_object(opt, result_name, result)
+    export_object(opt, result_name, opt.fs_method, result)
 
 
 if __name__ == "__main__":
