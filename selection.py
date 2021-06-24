@@ -128,7 +128,7 @@ def extract_feature_map(lname, model, dataloader, device):
     feature_map = []
 
     def _hook(module, finput, foutput):
-        feature_map.append(foutput.detach().cpu())
+        feature_map.append(foutput.detach())
 
     module = rgetattr(model, lname)
     handle = module.register_forward_hook(_hook)
@@ -136,7 +136,7 @@ def extract_feature_map(lname, model, dataloader, device):
     criterion = torch.nn.CrossEntropyLoss()
     base_acc, (pred_labels, trg_labels) = eval(
         model, dataloader, criterion, device,
-        desc="Evaluate", return_label=True, tqdm_leave=False)
+        desc="Extract", return_label=True, tqdm_leave=False)
     feature_map = torch.cat(feature_map, dim=0)
 
     handle.remove()
@@ -217,7 +217,7 @@ def feature_weighting(opt, model, device):
             layer_name = lname
 
     fmaps, (preds, trgs), _ = extract_feature_map(layer_name, model2, valloader, device)
-    fmaps = torch.nn.functional.relu(fmaps)
+    fmaps = torch.nn.functional.relu(fmaps).cpu()
 
     cls_err_matrix = []
     for cls_i in range(num_classes):
@@ -277,6 +277,30 @@ def weight_change(opt, model, device):
     return suspicious
 
 
+def lower_rank(opt, model, device):
+    _, (_, valloader, _) = load_dataset(opt, noise=(True, False), prob=1)
+    model = model.to(device)
+    model.eval()
+
+    suspicious = {}
+    num_modules = len(list(model.modules()))
+    for lname, module in tqdm(model.named_modules(), total=num_modules, desc="Modules"):
+        if isinstance(module, nn.Conv2d):
+            fmaps, *_ = extract_feature_map(lname, model, valloader, device)
+            fmaps = torch.nn.functional.relu(fmaps)
+
+            b, c = fmaps.size(0), fmaps.size(1)
+            rank = torch.tensor([torch.matrix_rank(fmaps[i, j, :, :]).item()
+                                 for i in range(b) for j in range(c)]) \
+                        .view(b, c).float().sum(0).cpu()
+
+            r = opt.suspicious_ratio
+            indices = rank.topk((int)(c*r), largest=False).indices
+            suspicious[lname] = indices.tolist()
+
+    return suspicious
+
+
 def main():
     opt = parser.parse_args()
     print(opt)
@@ -298,6 +322,9 @@ def main():
         result = weight_change(opt, model, device)
         result_name = "susp_filters.json"
         preview_object(result)
+    elif opt.fs_method == "lowrank":
+        result = lower_rank(opt, model, device)
+        result_name = "susp_filters.json"
     else:
         raise ValueError("Invalid method")
 

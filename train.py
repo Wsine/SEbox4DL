@@ -7,7 +7,7 @@ from arguments import parser
 from utils import *
 
 
-def train(model, trainloader, optimizer, criterion, device, desc="   Train"):
+def train(model, trainloader, optimizer, criterion, device, desc="Train"):
     model.train()
     train_loss, correct, total = 0, 0, 0
     with tqdm(trainloader, desc=desc) as tepoch:

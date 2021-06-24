@@ -55,15 +55,60 @@ class ConvCorrect(nn.Module):
         return out
 
 
+class ConvCorrect2(nn.Module):
+    def __init__(self, conv_layer, indices):
+        super(ConvCorrect2, self).__init__()
+        self.indices = indices
+        self.conv = conv_layer
+        self.cru = nn.Conv2d(
+            conv_layer.in_channels,
+            len(indices),
+            kernel_size=conv_layer.kernel_size,
+            stride=conv_layer.stride,
+            padding=conv_layer.padding,
+            bias=False)
+
+    def forward(self, x):
+        out = self.conv(x)
+        out[:, self.indices] = self.cru(x)
+        return out
+
+
 def construct_model(opt, model):
     sus_filters = json.load(open(os.path.join(
         opt.output_dir, opt.dataset, opt.model, "susp_filters.json"
     )))
     for name, indices in sus_filters.items():
         layer_name = name.rstrip(".weight")
-        correct_unit = ConvCorrect(rgetattr(model, layer_name), indices)
+        #  correct_unit = ConvCorrect(rgetattr(model, layer_name), indices)
+        correct_unit = ConvCorrect2(rgetattr(model, layer_name), indices)
         rsetattr(model, layer_name, correct_unit)
     return model
+
+
+def coordinate_filters(opt, model):
+    for name, module in model.named_modules():
+        if "cru" in name:
+            conv_name = name.rstrip("cru") + "conv"
+            conv_module = rgetattr(model, conv_name)
+
+            precision = 1000
+            conv_weight = conv_module.weight.view(conv_module.weight.size(0), -1)
+            conv_weight = (conv_weight * precision).int().float()
+            conv_rank = torch.matrix_rank(conv_weight)
+            cru_weight = module.weight.view(module.weight.size(0), -1)
+
+            unrank_idx = []
+            for i, w in enumerate(cru_weight):
+                w = (w.view(-1).view(1, -1) * precision).int().float()
+                cat_weight = torch.cat([conv_weight, w])
+                new_rank = torch.matrix_rank(cat_weight)
+                if new_rank <= conv_rank:
+                    unrank_idx.append(i)
+
+            if unrank_idx:
+                with torch.no_grad():
+                    torch.nn.init.xavier_uniform_(module.weight[unrank_idx])
 
 
 def retrain(opt, model, ckp, device):
@@ -71,6 +116,7 @@ def retrain(opt, model, ckp, device):
 
     model = construct_model(opt, model)
     model = model.to(device)
+
     for name, module in model.named_modules():
         if "cru" in name:
             for param in module.parameters():
@@ -104,9 +150,12 @@ def retrain(opt, model, ckp, device):
             torch.save(state, get_model_path(opt, state=f"correct_{opt.fs_method}"))
             best_acc = acc
         scheduler.step()
+        coordinate_filters(opt, model)
     print("[info] the best retrain accuracy is {:.4f}%".format(best_acc))
 
     del trainloader, testloader
+    state = torch.load(get_model_path(opt, state=f"correct_{opt.fs_method}"))
+    model.load_state_dict(state["net"])
     _, (_, _, testloader) = load_dataset(opt, noise=(False, False))
     normal_acc, *_ = eval(model, testloader, criterion, device, desc="Normal")
     print("[info] the normal accuracy is {:.4f}%".format(normal_acc))
@@ -163,7 +212,7 @@ def main():
     device = torch.device(opt.device if torch.cuda.is_available() else "cpu")
     model, ckp = resume_model(opt, state="primeval")
 
-    if opt.fs_method in ("bpindiret", "featswap", "wgtchange"):
+    if opt.fs_method in ("bpindiret", "featswap", "wgtchange", "lowrank"):
         retrain(opt, model, ckp, device)
     elif opt.fs_method == "featwgting":
         patch(opt, model, device)
