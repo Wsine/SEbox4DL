@@ -29,7 +29,6 @@ class CorrectionUnit(nn.Module):
         self.conv4 = nn.Conv2d(
             Di, num_filters, kernel_size=1, stride=1, padding=0, bias=False)
         self.shortcut = nn.Sequential()
-        self.sum_bn = nn.BatchNorm2d(num_filters)
 
     def forward(self, x):
         out = F.relu(self.bn1(self.conv1(x)))
@@ -37,7 +36,6 @@ class CorrectionUnit(nn.Module):
         out = F.relu(self.bn3(self.conv3(out)))
         out = self.conv4(out)
         out += self.shortcut(x)
-        out = self.sum_bn(out)
         return out
 
 
@@ -45,13 +43,18 @@ class ConvCorrect(nn.Module):
     def __init__(self, conv_layer, indices):
         super(ConvCorrect, self).__init__()
         self.indices = indices
+        self.others = [i for i in range(conv_layer.out_channels)
+                       if i not in indices]
         self.conv = conv_layer
         num_filters = len(indices)
         self.cru = CorrectionUnit(num_filters, num_filters, 3)
 
     def forward(self, x):
         out = self.conv(x)
-        out[:, self.indices] = self.cru(out[:, self.indices])
+        out_lower = out[:, self.others]
+        out_upper = self.cru(out[:, self.indices])
+        out = torch.cat([out_lower, out_upper], dim=1)
+        #  out[:, self.indices] = self.cru(out[:, self.indices])
         return out
 
 
@@ -76,12 +79,12 @@ class ConvCorrect2(nn.Module):
 
 def construct_model(opt, model):
     sus_filters = json.load(open(os.path.join(
-        opt.output_dir, opt.dataset, opt.model, "susp_filters.json"
+        opt.output_dir, opt.dataset, opt.model, f"susp_filters_{opt.fs_method}.json"
     )))
     for name, indices in sus_filters.items():
         layer_name = name.rstrip(".weight")
-        #  correct_unit = ConvCorrect(rgetattr(model, layer_name), indices)
-        correct_unit = ConvCorrect2(rgetattr(model, layer_name), indices)
+        correct_unit = ConvCorrect(rgetattr(model, layer_name), indices)
+        #  correct_unit = ConvCorrect2(rgetattr(model, layer_name), indices)
         rsetattr(model, layer_name, correct_unit)
     return model
 
@@ -150,7 +153,7 @@ def retrain(opt, model, ckp, device):
             torch.save(state, get_model_path(opt, state=f"correct_{opt.fs_method}"))
             best_acc = acc
         scheduler.step()
-        coordinate_filters(opt, model)
+        #  coordinate_filters(opt, model)
     print("[info] the best retrain accuracy is {:.4f}%".format(best_acc))
 
     del trainloader, testloader
