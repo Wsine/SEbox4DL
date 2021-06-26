@@ -81,10 +81,17 @@ def construct_model(opt, model):
     sus_filters = json.load(open(os.path.join(
         opt.output_dir, opt.dataset, opt.model, f"susp_filters_{opt.fs_method}.json"
     )))
-    for name, indices in sus_filters.items():
+    for idx, (name, ranking) in enumerate(sus_filters.items()):
         layer_name = name.rstrip(".weight")
-        correct_unit = ConvCorrect(rgetattr(model, layer_name), indices)
-        #  correct_unit = ConvCorrect2(rgetattr(model, layer_name), indices)
+        r = 1.5 * opt.suspicious_ratio if idx == 0 else opt.suspicious_ratio
+        num_susp = (int)(len(ranking) * r)
+        indices = ranking[:num_susp]
+        if opt.correct_type == "crtunit":
+            correct_unit = ConvCorrect(rgetattr(model, layer_name), indices)
+        elif opt.correct_type == "replace":
+            correct_unit = ConvCorrect2(rgetattr(model, layer_name), indices)
+        else:
+            raise ValueError("Invalid correct type")
         rsetattr(model, layer_name, correct_unit)
     return model
 
@@ -115,7 +122,7 @@ def coordinate_filters(opt, model):
 
 
 def retrain(opt, model, ckp, device):
-    _, (trainloader, _, testloader) = load_dataset(opt, noise=(True, True))
+    _, (trainloader, valloader, _) = load_dataset(opt, noise=(True, True))
 
     model = construct_model(opt, model)
     model = model.to(device)
@@ -135,11 +142,11 @@ def retrain(opt, model, ckp, device):
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
-    best_acc, *_ = eval(model, testloader, criterion, device, desc="Baseline")
+    best_acc, *_ = eval(model, valloader, criterion, device, desc="Baseline")
     for epoch in range(0, opt.correct_epoch):
         print("Epoch: {}".format(epoch))
         train(model, trainloader, optimizer, criterion, device)
-        acc, *_ = eval(model, testloader, criterion, device)
+        acc, *_ = eval(model, valloader, criterion, device)
         if acc > best_acc:
             print("Saving...")
             state = {
@@ -153,10 +160,11 @@ def retrain(opt, model, ckp, device):
             torch.save(state, get_model_path(opt, state=f"correct_{opt.fs_method}"))
             best_acc = acc
         scheduler.step()
-        #  coordinate_filters(opt, model)
+        if opt.correct_type == "replace":
+            coordinate_filters(opt, model)
     print("[info] the best retrain accuracy is {:.4f}%".format(best_acc))
 
-    del trainloader, testloader
+    del trainloader, valloader
     state = torch.load(get_model_path(opt, state=f"correct_{opt.fs_method}"))
     model.load_state_dict(state["net"])
     _, (_, _, testloader) = load_dataset(opt, noise=(False, False))

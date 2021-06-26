@@ -1,11 +1,39 @@
 import math
+import random
 
 import torch
 import torchvision
-import torchvision.transforms as transforms
+import torchvision.transforms as T
 from sklearn.model_selection import train_test_split
 
 from utils import cache_object
+
+
+class RandomApplyOne(object):
+    """Randomly apply one of the tranformers to the input"""
+
+    def __init__(self, trans):
+        self.trans = trans
+
+    def __call__(self, x):
+        t = random.choice(self.trans)
+        return t(x)
+
+
+class PostTransformDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset, transform=None):
+        self.dataset = dataset
+        self.transform = transform
+
+    def __getitem__(self, idx):
+        x, y = self.dataset[idx]
+        if self.transform:
+            x = self.transform(x)
+        return x, y
+
+    def __len__(self):
+        return len(self.dataset)
+
 
 @cache_object(filename='dataset.pkl')
 def load_dataset(
@@ -16,27 +44,54 @@ def load_dataset(
         raise ValueError("One of return_set and return_loader should be true")
 
     common_transformers = [
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
-    ]
-    noise_transformers = [
-        transforms.RandomApply(
-            [transforms.GaussianBlur(math.ceil(4*opt.gaussion_std)//2*2+1, sigma=opt.gaussion_std)],
-            p=prob
-        )
+        T.ToTensor(),
+        T.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
     ]
 
-    train_transformers = (noise_transformers if noise[0] else []) + common_transformers
-    trainset = torchvision.datasets.CIFAR10(
-        root=opt.data_dir, train=True, download=True,
-        transform=transforms.Compose(train_transformers)
+    train_noise, test_noise = noise
+    train_transformers = []
+    if train_noise:
+        train_transformers.append(
+            T.RandomApply(
+                [RandomApplyOne([
+                    T.GaussianBlur(math.ceil(4*std)//2*2+1, sigma=std)
+                    for std in [0.5, 1., 1.5, 2., 2.5, 3.]
+                ])],
+                p=prob
+            )
+        )
+    base_trainset = torchvision.datasets.CIFAR10(
+        root=opt.data_dir, train=True, download=True
     )
-    trainset, valset = train_test_split(trainset, test_size=1./50, random_state=2021, stratify=trainset.targets)
-    test_transformers = (noise_transformers if noise[1] else []) + common_transformers
-    testset = torchvision.datasets.CIFAR10(
+    pretrainset, prevalset = train_test_split(
+        base_trainset, test_size=1./50, random_state=2021, stratify=base_trainset.targets)
+    trainset = PostTransformDataset(
+        pretrainset,
+        transform=T.Compose(train_transformers + common_transformers)
+    )
+    valset = PostTransformDataset(
+        prevalset,
+        transform=T.Compose(train_transformers + common_transformers)
+    )
+
+    base_testset = torchvision.datasets.CIFAR10(
         root=opt.data_dir, train=False, download=True,
-        transform=transforms.Compose(test_transformers)
+        transform=T.Compose(common_transformers)
     )
+    increase_testset = []
+    if test_noise:
+        test_noise_transformers = [
+            T.GaussianBlur(math.ceil(4*std)//2*2+1, sigma=std)
+            for std in [0.5, 1., 1.5, 2., 2.5, 3.]
+        ]
+        for t in test_noise_transformers:
+            incset = torchvision.datasets.CIFAR10(
+                root=opt.data_dir, train=False, download=False,
+                transform=T.Compose([t] + common_transformers)
+            )
+            increase_testset.append(incset)
+    testset = torch.utils.data.ConcatDataset([base_testset] + increase_testset)
+
     if return_set and not return_loader:
         return (trainset, valset, testset), (None, None, None)
 

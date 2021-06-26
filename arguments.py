@@ -1,11 +1,23 @@
 import argparse
 
 
+class Args(object):
+    @staticmethod
+    def get_num_class(dataset):
+        num = {
+            'cifar10': 10,
+            'cifar100': 100
+        }
+        return num[dataset]
+
+
 devices = ["cpu", "cuda"]
 datasets = ["cifar10", "cifar100"]
 models = ["resnet34", "resnet50"]
 noises = ["gaussion", "awgn"]
 fsmethods = ["bpindiret", "featswap", "featwgting", "wgtchange", "lowrank"]
+crutypes = ["crtunit", "replace"]
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", default="data")
@@ -29,5 +41,6 @@ select_group.add_argument("--fs_method", type=str, default="lowrank", choices=fs
 select_group.add_argument("--mask_smallest_ratio", type=float, default=0.1)
 select_group.add_argument("--suspicious_ratio", type=float, default=0.05)
 correct_group = parser.add_argument_group('correct')
+correct_group.add_argument("--correct_type", default="replace", choices=crutypes)
 correct_group.add_argument("--correct_epoch", type=int, default=20)
 

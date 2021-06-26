@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from model import resume_model
 from dataset import load_dataset
-from arguments import parser
+from arguments import parser, Args
 from train import train, eval
 from utils import *
 
@@ -36,8 +36,8 @@ def overall_improve(opt, model, ckp, dataloaders, device):
 
 def construct_error_bias_dataloader(opt, model, datasets, dataloaders, device):
     trainset, valset, _ = datasets
-    _, valloader, testloader = dataloaders
-    num_classes = len(testloader.classes)
+    _, valloader, _ = dataloaders
+    num_classes = Args.get_num_class(opt.dataset)
 
     model2 = copy.deepcopy(model).to(device)
 
@@ -153,61 +153,39 @@ def featuremap_swap(opt, model, device):
     model1.eval()
     model2.eval()
 
+    criterion = torch.nn.CrossEntropyLoss()
+
     suspicious = {}
     num_modules = len(list(model2.modules()))
     for lname, module in tqdm(model2.named_modules(), total=num_modules, desc="Modules"):
         if isinstance(module, nn.Conv2d):
-            channel_feature = []
-            def _extract_feature(filter_index):
-                def __hook(module, finput, foutput):
-                    channel_feature.clear()
-                    channel_feature.append(foutput[:, filter_index])
-                return __hook
+            fmaps, _, base_acc = extract_feature_map(lname, model1, valloader1, device)
+            fmaps_idx = 0
 
             def _substitute_feature(filter_index):
                 def __hook(module, finput, foutput):
-                    foutput[:, filter_index] = channel_feature[-1]
+                    batch_size = foutput.size(0)
+                    foutput[:, filter_index] = fmaps[fmaps_idx:fmaps_idx+batch_size, filter_index]
+                    fmaps_idx += batch_size
                     return foutput
                 return __hook
 
             recover = []
             for fidx in tqdm(range(module.out_channels), desc="Filters", leave=False):
-                handle1 = rgetattr(model1, lname).register_forward_hook(
-                    _extract_feature(fidx)
-                )
-                handle2 = rgetattr(model2, lname).register_forward_hook(
-                    _substitute_feature(fidx)
-                )
-
-                total, correct1, correct2 = 0, 0, 0
-                for (inputs1, targets1), (inputs2, targets2) in zip(valloader1, valloader2):
-                    outputs1 = model1(inputs1.to(device))
-                    outputs2 = model2(inputs2.to(device))
-
-                    total += targets1.size(0)
-                    _, predicted = outputs1.max(1)
-                    correct1 += predicted.cpu().eq(targets1).sum().item()
-                    _, predicted = outputs2.max(1)
-                    correct2 += predicted.cpu().eq(targets2).sum().item()
-
-                base_acc = 100. * correct1 / total
-                swap_acc = 100. * correct2 / total
+                handler = module.register_forward_hook(_substitute_feature(fidx))
+                swap_acc, _ = eval(model, valloader2, criterion, device, tqdm_leave=False)
                 recover.append(base_acc - swap_acc)
+                handler.remove()
 
-                handle1.remove()
-                handle2.remove()
-
-            topk = (int)(module.out_channels * opt.suspicious_ratio)
-            indices = sorted(range(len(recover)),
-                             key=lambda i: recover[i])[:topk]
+            indices = sorted(range(len(recover)), key=lambda i: recover[i])
             suspicious[lname] = indices
 
     return suspicious
 
 
 def feature_weighting(opt, model, device):
-    _, (_, valloader, testloader) = load_dataset(opt)
-    num_classes = len(testloader.classes)
+    _, (_, valloader, _) = load_dataset(opt)
+    num_classes = Args.get_num_class(opt.dataset)
 
     model2 = copy.deepcopy(model).to(device)
 
@@ -294,9 +272,9 @@ def lower_rank(opt, model, device):
                                  for i in range(b) for j in range(c)]) \
                         .view(b, c).float().sum(0).cpu()
 
-            r = opt.suspicious_ratio
-            indices = rank.topk((int)(c*r), largest=False).indices
-            suspicious[lname] = indices.tolist()
+            rank = rank.tolist()
+            indices = sorted(range(len(rank)), key=lambda i: rank[i])
+            suspicious[lname] = indices
 
     return suspicious
 
