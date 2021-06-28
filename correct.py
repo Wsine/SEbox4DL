@@ -122,7 +122,7 @@ def coordinate_filters(opt, model):
 
 
 def retrain(opt, model, ckp, device):
-    _, (trainloader, valloader, _) = load_dataset(opt, noise=(True, True))
+    _, (trainloader, valloader, _) = load_dataset(opt, noise=(True, False))
 
     model = construct_model(opt, model)
     model = model.to(device)
@@ -162,6 +162,49 @@ def retrain(opt, model, ckp, device):
         scheduler.step()
         if opt.correct_type == "replace":
             coordinate_filters(opt, model)
+    print("[info] the best retrain accuracy is {:.4f}%".format(best_acc))
+
+    del trainloader, valloader
+    state = torch.load(get_model_path(opt, state=f"correct_{opt.fs_method}"))
+    model.load_state_dict(state["net"])
+    _, (_, _, testloader) = load_dataset(opt, noise=(False, False))
+    normal_acc, *_ = eval(model, testloader, criterion, device, desc="Normal")
+    print("[info] the normal accuracy is {:.4f}%".format(normal_acc))
+    _, (_, _, testloader) = load_dataset(opt, noise=(False, True), prob=1)
+    robust_acc, *_ = eval(model, testloader, criterion, device, desc="Robustness")
+    print("[info] the robustness accuracy is {:.4f}%".format(robust_acc))
+
+
+def finetune(opt, model, ckp, device):
+    _, (trainloader, valloader, _) = load_dataset(opt, noise=(True, False))
+
+    model = model.to(device)
+
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(
+        model.parameters(),
+        lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
+
+    best_acc, *_ = eval(model, valloader, criterion, device, desc="Baseline")
+    for epoch in range(0, opt.correct_epoch):
+        print("Epoch: {}".format(epoch))
+        train(model, trainloader, optimizer, criterion, device)
+        acc, *_ = eval(model, valloader, criterion, device)
+        if acc > best_acc:
+            print("Saving...")
+            state = {
+                "epoch": ckp["epoch"],
+                "cepoch": epoch,
+                "net": model.state_dict(),
+                "optim": optimizer.state_dict(),
+                "sched": scheduler.state_dict(),
+                "acc": acc
+            }
+            torch.save(state, get_model_path(opt, state=f"correct_{opt.fs_method}"))
+            best_acc = acc
+        scheduler.step()
     print("[info] the best retrain accuracy is {:.4f}%".format(best_acc))
 
     del trainloader, valloader
@@ -225,6 +268,8 @@ def main():
 
     if opt.fs_method in ("bpindiret", "featswap", "wgtchange", "lowrank"):
         retrain(opt, model, ckp, device)
+    elif opt.fs_method == "finetune":
+        finetune(opt, model, ckp, device)
     elif opt.fs_method == "featwgting":
         patch(opt, model, device)
     else:

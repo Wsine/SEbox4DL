@@ -15,7 +15,7 @@ devices = ["cpu", "cuda"]
 datasets = ["cifar10", "cifar100"]
 models = ["resnet34", "dcalexnet"]
 noises = ["gaussion", "awgn"]
-fsmethods = ["bpindiret", "featswap", "featwgting", "wgtchange", "lowrank"]
+fsmethods = ["bpindiret", "featswap", "featwgting", "wgtchange", "lowrank", "finetune"]
 crutypes = ["crtunit", "replace"]
 
 
