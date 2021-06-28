@@ -43,9 +43,20 @@ def load_dataset(
     if not return_set and not return_loader:
         raise ValueError("One of return_set and return_loader should be true")
 
+    if opt.dataset == "cifar10":
+        cifar = torchvision.datasets.CIFAR10
+        mean = (0.4914, 0.4822, 0.4465)
+        std = (0.2023, 0.1994, 0.2010)
+    elif opt.dataset == "cifar100":
+        cifar = torchvision.datasets.CIFAR100
+        mean = (0.5071, 0.4867, 0.4408)
+        std = (0.2675, 0.2565, 0.2761)
+    else:
+        raise ValueError("Invalid dataset value")
+
     common_transformers = [
         T.ToTensor(),
-        T.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+        T.Normalize(mean, std)
     ]
 
     train_noise, test_noise = noise
@@ -60,9 +71,7 @@ def load_dataset(
                 p=prob
             )
         )
-    base_trainset = torchvision.datasets.CIFAR10(
-        root=opt.data_dir, train=True, download=True
-    )
+    base_trainset = cifar(root=opt.data_dir, train=True, download=True)
     pretrainset, prevalset = train_test_split(
         base_trainset, test_size=1./50, random_state=2021, stratify=base_trainset.targets)
     trainset = PostTransformDataset(
@@ -74,7 +83,7 @@ def load_dataset(
         transform=T.Compose(train_transformers + common_transformers)
     )
 
-    base_testset = torchvision.datasets.CIFAR10(
+    base_testset = cifar(
         root=opt.data_dir, train=False, download=True,
         transform=T.Compose(common_transformers)
     )
@@ -85,7 +94,7 @@ def load_dataset(
             for std in [0.5, 1., 1.5, 2., 2.5, 3.]
         ]
         for t in test_noise_transformers:
-            incset = torchvision.datasets.CIFAR10(
+            incset = cifar(
                 root=opt.data_dir, train=False, download=False,
                 transform=T.Compose([t] + common_transformers)
             )

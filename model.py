@@ -5,12 +5,13 @@ from utils import get_model_path
 
 def load_model(opt):
     if "cifar" in opt.dataset:
+        num_classes = (int)(opt.dataset.lstrip("cifar"))
         if opt.model == "resnet34":
             from models.cifar.resnet import ResNet34
-            return ResNet34()
-        elif opt.model == "resnet50":
-            from models.cifar.resnet import ResNet50
-            return ResNet50()
+            return ResNet34(num_classes=num_classes)
+        elif opt.model == "dcalexnet":
+            from models.cifar.dcalexnet import DcAlexNet
+            return DcAlexNet(num_classes=num_classes)
         else:
             raise ValueError("Invalid model name")
     else:
