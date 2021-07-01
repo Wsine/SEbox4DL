@@ -69,6 +69,7 @@ class ConvCorrect2(nn.Module):
             kernel_size=conv_layer.kernel_size,
             stride=conv_layer.stride,
             padding=conv_layer.padding,
+            groups=conv_layer.groups,
             bias=False)
 
     def forward(self, x):
@@ -83,42 +84,68 @@ def construct_model(opt, model):
     )))
     for idx, (name, ranking) in enumerate(sus_filters.items()):
         layer_name = name.rstrip(".weight")
-        r = 1.5 * opt.suspicious_ratio if idx == 0 else opt.suspicious_ratio
-        num_susp = (int)(len(ranking) * r)
-        indices = ranking[:num_susp]
+        module = rgetattr(model, layer_name)
+
         if opt.correct_type == "crtunit":
-            correct_unit = ConvCorrect(rgetattr(model, layer_name), indices)
+            r = 1.5 * opt.suspicious_ratio if idx == 0 else opt.suspicious_ratio
+            num_susp = (int)(len(ranking) * r)
+            indices = ranking[:num_susp]
+        else:
+            r = opt.suspicious_ratio
+            num_susp = (int)(len(ranking) * r)
+            indices = ranking[:num_susp]
+            while len(indices) % module.groups != 0:
+                num_susp += 1
+                indices = ranking[:num_susp]
+
+        if opt.correct_type == "crtunit":
+            correct_unit = ConvCorrect(module, indices)
         elif opt.correct_type == "replace":
-            correct_unit = ConvCorrect2(rgetattr(model, layer_name), indices)
+            correct_unit = ConvCorrect2(module, indices)
         else:
             raise ValueError("Invalid correct type")
         rsetattr(model, layer_name, correct_unit)
     return model
 
 
+@torch.no_grad()
 def coordinate_filters(opt, model):
+    correct_rank = []
     for name, module in model.named_modules():
         if "cru" in name:
             conv_name = name.rstrip("cru") + "conv"
             conv_module = rgetattr(model, conv_name)
+            parent_name = name.rstrip(".cru")
+            parent_module = rgetattr(model, parent_name)
 
-            precision = 1000
-            conv_weight = conv_module.weight.view(conv_module.weight.size(0), -1)
-            conv_weight = (conv_weight * precision).int().float()
+            chn_out, chn_in, kh, kw = conv_module.weight.size()
+            indices = parent_module.indices
+            non_indices = [i for i in range(chn_out) if i not in indices]
+
+            #  precision = 1000
+            conv_weight = conv_module.weight[non_indices].view(len(non_indices), -1)
+            #  conv_weight = (conv_weight * precision).int().float()
             conv_rank = torch.matrix_rank(conv_weight)
             cru_weight = module.weight.view(module.weight.size(0), -1)
 
             unrank_idx = []
+            unrank_mean = []
             for i, w in enumerate(cru_weight):
-                w = (w.view(-1).view(1, -1) * precision).int().float()
+                w = w.view(-1).view(1, -1)
+                #  w = (w * precision).int().float()
                 cat_weight = torch.cat([conv_weight, w])
                 new_rank = torch.matrix_rank(cat_weight)
                 if new_rank <= conv_rank:
                     unrank_idx.append(i)
+                    unrank_mean.append(cat_weight.mean(dim=0).view(chn_in, kh, kw))
 
             if unrank_idx:
-                with torch.no_grad():
-                    torch.nn.init.xavier_uniform_(module.weight[unrank_idx])
+                #  torch.nn.init.xavier_uniform_(module.weight[unrank_idx])
+                for i, m in zip(unrank_idx, unrank_mean):
+                    module.weight[i] = m
+
+            correct_rank.append(len(unrank_idx))
+    print("Correct Rank: [{}]".format(' '.join(map(str, correct_rank))))
 
 
 def retrain(opt, model, ckp, device):

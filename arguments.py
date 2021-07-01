@@ -13,7 +13,7 @@ class Args(object):
 
 devices = ["cpu", "cuda"]
 datasets = ["cifar10", "cifar100"]
-models = ["resnet34", "dcalexnet"]
+models = ["resnet34", "dcalexnet", "resnext29"]
 noises = ["gaussion", "awgn"]
 fsmethods = ["bpindiret", "featswap", "featwgting", "wgtchange", "lowrank", "finetune"]
 crutypes = ["crtunit", "replace"]

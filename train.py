@@ -72,7 +72,12 @@ def main():
 
     device = torch.device(opt.device if torch.cuda.is_available() else "cpu")
     _, (trainloader, _, testloader) = load_dataset(opt)
-    model = load_model(opt).to(device)
+    model = load_model(opt)
+    opt.parallel = False
+    if device.type == "cuda" and torch.cuda.device_count() > 1:
+        model = torch.nn.DataParallel(model)
+        opt.parallel = True
+    model = model.to(device)
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(
         model.parameters(),
@@ -84,7 +89,10 @@ def main():
     best_acc = 0
     if opt.resume or opt.eval:
         ckp = torch.load(get_model_path(opt, state="primeval"))
-        model.load_state_dict(ckp["net"])
+        if opt.parallel:
+            model.module.load_state_dict(ckp["net"])
+        else:
+            model.load_state_dict(ckp["net"])
         optimizer.load_state_dict(ckp["optim"])
         scheduler.load_state_dict(ckp["sched"])
         start_epoch = ckp["epoch"]
@@ -106,7 +114,7 @@ def main():
             print("Saving...")
             state = {
                 "epoch": epoch,
-                "net": model.state_dict(),
+                "net": model.state_dict() if not opt.parallel else model.module.state_dict(),
                 "optim": optimizer.state_dict(),
                 "sched": scheduler.state_dict(),
                 "acc": acc

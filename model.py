@@ -12,6 +12,9 @@ def load_model(opt):
         elif opt.model == "dcalexnet":
             from models.cifar.dcalexnet import DcAlexNet
             return DcAlexNet(num_classes=num_classes)
+        elif opt.model == "resnext29":
+            from models.cifar.resnext import ResNeXt29_4x64d
+            return ResNeXt29_4x64d(num_classes=num_classes)
         else:
             raise ValueError("Invalid model name")
     else:
