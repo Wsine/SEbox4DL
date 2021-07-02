@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from model import resume_model
 from dataset import load_dataset
-from arguments import parser, Args
+from arguments import selparser as parser, Args
 from train import train, eval
 from utils import *
 

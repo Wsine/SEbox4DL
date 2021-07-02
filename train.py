@@ -3,7 +3,7 @@ from tqdm import tqdm
 
 from dataset import load_dataset
 from model import load_model
-from arguments import parser
+from arguments import trnparser as parser
 from utils import *
 
 

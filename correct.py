@@ -9,7 +9,7 @@ from sklearn.metrics import confusion_matrix
 
 from model import resume_model
 from dataset import load_dataset
-from arguments import parser
+from arguments import corparser as parser
 from train import train, eval
 from utils import *
 
