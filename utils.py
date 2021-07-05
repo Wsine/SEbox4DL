@@ -101,3 +101,23 @@ def rgetattr(obj, attr, *args):
         return getattr(obj, attr, *args)
     return functools.reduce(_getattr, [obj] + attr.split('.'))
 
+
+# copied from: https://stackoverflow.com/questions/36836161/
+#   singledispatch-based-on-value-instead-of-type#36837332
+class AttrDispatcher(object):
+    def __init__(self, attr):
+        self._attr = attr
+        self.registry = {}
+
+    def __call__(self, *args, **kwargs):
+        opt, *_ = args
+        assert hasattr(opt, self._attr), f"The first argument must has attribute '{self._attr}'"
+        func = self.registry[getattr(opt, self._attr)]
+        return func(*args, **kwargs)
+
+    def register(self, key):
+        def _decorator(method):
+            self.registry[key] = method
+            return method
+        return _decorator
+

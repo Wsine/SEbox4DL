@@ -11,6 +11,9 @@ from train import train, eval
 from utils import *
 
 
+dispatcher = AttrDispatcher("fs_method")
+
+
 def overall_improve(opt, model, ckp, dataloaders, device):
     print("[info] Overall improvement")
     model1 = copy.deepcopy(model).to(device)
@@ -114,6 +117,7 @@ def differentiate_weights(opt, oa_dstate, oe_dstate):
     return suspicious
 
 
+@dispatcher.register("bpindiret")
 def backprob_indirection(opt, model, ckp, device):
     datasets, dataloaders = load_dataset(opt, return_set=True, return_loader=True)
 
@@ -144,8 +148,9 @@ def extract_feature_map(lname, model, dataloader, device):
     return feature_map, (pred_labels, trg_labels), base_acc
 
 
+@dispatcher.register("featswap")
 @torch.no_grad()
-def featuremap_swap(opt, model, device):
+def featuremap_swap(opt, model, _, device):
     _, (_, valloader1, _) = load_dataset(opt, noise=(False, False))
     _, (_, valloader2, _) = load_dataset(opt, noise=(True, False), prob=1)
     model1 = model.to(device)
@@ -183,7 +188,8 @@ def featuremap_swap(opt, model, device):
     return suspicious
 
 
-def feature_weighting(opt, model, device):
+@dispatcher.register("featwgting")
+def feature_weighting(opt, model, _, device):
     _, (_, valloader, _) = load_dataset(opt)
     num_classes = Args.get_num_class(opt.dataset)
 
@@ -212,7 +218,8 @@ def feature_weighting(opt, model, device):
     return cls_err_matrix
 
 
-def weight_change(opt, model, device):
+@dispatcher.register("wgtchange")
+def weight_change(opt, model, _, device):
     _, (_, valloader, testloader) = load_dataset(opt, noise=(True, True), prob=1)
     model = model.to(device)
     origin_state = model.state_dict()
@@ -255,7 +262,8 @@ def weight_change(opt, model, device):
     return suspicious
 
 
-def lower_rank(opt, model, device):
+@dispatcher.register("lowrank")
+def lower_rank(opt, model, _, device):
     _, (_, valloader, _) = load_dataset(opt, noise=(True, False), prob=1)
     model = model.to(device)
     model.eval()
@@ -279,6 +287,36 @@ def lower_rank(opt, model, device):
     return suspicious
 
 
+@dispatcher.register("perfloss")
+def performance_loss(opt, model, _, device):
+    _, (_, valloader, _) = load_dataset(opt, noise=(False, False))
+    model = model.to(device)
+    model.eval()
+    criterion = torch.nn.CrossEntropyLoss()
+    base_acc, _ = eval(model, valloader, criterion, device)
+
+    def _mask_out_channel(chn):
+        def __hook(module, finput, foutput):
+            foutput[:, chn] = 0
+            return foutput
+        return __hook
+
+    suspicious = {}
+    conv_names = [n for n, m in model.named_modules() if isinstance(m, nn.Conv2d)]
+    for lname in tqdm(conv_names, desc="Modules"):
+        module = rgetattr(model, lname)
+        perfloss = []
+        for chn in tqdm(range(module.out_channels), desc="Filters", leave=False):
+            handle = module.register_forward_hook(_mask_out_channel(chn))
+            acc, _ = eval(model, valloader, criterion, device, tqdm_leave=False)
+            perfloss.append(base_acc - acc)
+            handle.remove()
+        indices = sorted(range(len(perfloss)), key=lambda i: perfloss[i])
+        suspicious[lname] = indices
+
+    return suspicious
+
+
 def main():
     opt = parser.parse_args()
     print(opt)
@@ -286,26 +324,10 @@ def main():
     device = torch.device(opt.device if torch.cuda.is_available() else "cpu")
     model, ckp = resume_model(opt, state="primeval")
 
-    if opt.fs_method == "bpindiret":
-        result = backprob_indirection(opt, model, ckp, device)
-        result_name = "susp_filters.json"
-        preview_object(result)
-    elif opt.fs_method == "featswap":
-        result = featuremap_swap(opt, model, device)
-        result_name = "susp_filters.json"
-    elif opt.fs_method == "featwgting":
-        result = feature_weighting(opt, model, device)
+    result = dispatcher(opt, model, ckp, device)
+    result_name = "susp_filters.json"
+    if opt.fs_method == "featwgting":
         result_name = "feature_error_probability.pkl"
-    elif opt.fs_method == "wgtchange":
-        result = weight_change(opt, model, device)
-        result_name = "susp_filters.json"
-        preview_object(result)
-    elif opt.fs_method == "lowrank":
-        result = lower_rank(opt, model, device)
-        result_name = "susp_filters.json"
-    else:
-        raise ValueError("Invalid method")
-
     export_object(opt, result_name, opt.fs_method, result)
 
 

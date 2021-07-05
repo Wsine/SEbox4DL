@@ -1,3 +1,4 @@
+import sys
 import argparse
 
 
@@ -15,8 +16,9 @@ devices = ["cpu", "cuda"]
 datasets = ["cifar10", "cifar100"]
 models = ["resnet34", "dcalexnet", "resnext29"]
 noises = ["gaussion", "awgn"]
-fsmethods = ["bpindiret", "featswap", "featwgting", "wgtchange", "lowrank", "finetune"]
-crutypes = ["crtunit", "replace"]
+fsmethods = ["bpindiret", "featswap", "featwgting", "wgtchange", "lowrank", "perfloss"]
+crtmethods = ["patch", "finetune", "calibrate", "dual"]
+crttypes = ["crtunit", "replace"]
 
 
 commparser = argparse.ArgumentParser(add_help=False)
@@ -41,10 +43,11 @@ trnparser.add_argument("-e", "--max_epoch", type=int, default=50)
 selparser = argparse.ArgumentParser(parents=[commparser])
 selparser.add_argument("-f", "--fs_method", type=str, required=True, choices=fsmethods)
 selparser.add_argument("--mask_smallest_ratio", type=float, default=0.1)
-selparser.add_argument("--suspicious_ratio", type=float, default=0.05)
 
 corparser = argparse.ArgumentParser(parents=[commparser])
 corparser.add_argument("-f", "--fs_method", type=str, required=True, choices=fsmethods)
-corparser.add_argument("-c", "--correct_type", required=True, choices=crutypes)
+corparser.add_argument("-c", "--crt_method", type=str, required=True, choices=crtmethods)
+corparser.add_argument("--correct_type", required=any([v in sys.argv for v in ("patch", "dual")]), choices=crttypes)
 corparser.add_argument("--correct_epoch", type=int, default=20)
+corparser.add_argument("--suspicious_ratio", type=float, default=0.05)
 
