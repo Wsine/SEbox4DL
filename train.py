@@ -7,7 +7,7 @@ from arguments import trnparser as parser
 from utils import *
 
 
-def train(model, trainloader, optimizer, criterion, device, desc="Train"):
+def train(model, trainloader, optimizer, criterion, device, desc='Train'):
     model.train()
     train_loss, correct, total = 0, 0, 0
     with tqdm(trainloader, desc=desc) as tepoch:
@@ -30,9 +30,9 @@ def train(model, trainloader, optimizer, criterion, device, desc="Train"):
 
 
 @torch.no_grad()
-def eval(
+def test(
         model, valloader, criterion, device,
-        desc="Evaluate", return_label=False, tqdm_leave=True):
+        desc='Evaluate', return_label=False, tqdm_leave=True):
     model.eval()
     test_loss, correct, total = 0, 0, 0
     pred_labels, trg_labels = [], []
@@ -70,13 +70,17 @@ def main():
     print(opt)
     guard_folder(opt)
 
-    device = torch.device(opt.device if torch.cuda.is_available() else "cpu")
-    _, (trainloader, _, testloader) = load_dataset(opt)
+    device = torch.device(opt.device if torch.cuda.is_available() else 'cpu')
+    _, trainloader = load_dataset(opt, split='train')
+    _, testloader = load_dataset(opt, split='test')
     model = load_model(opt)
     opt.parallel = False
-    if device.type == "cuda" and torch.cuda.device_count() > 1:
-        model = torch.nn.DataParallel(model)
-        opt.parallel = True
+    if device.type == 'cuda':
+        if torch.cuda.device_count() > 1:
+            model = torch.nn.DataParallel(model)
+            opt.parallel = True
+        else:
+            device = torch.device(f'cuda:{opt.gpu}')
     model = model.to(device)
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(
@@ -88,42 +92,42 @@ def main():
     start_epoch = -1
     best_acc = 0
     if opt.resume or opt.eval:
-        ckp = torch.load(get_model_path(opt, state="primeval"))
+        ckp = torch.load(get_model_path(opt, state='pretrained'))
         if opt.parallel:
-            model.module.load_state_dict(ckp["net"])
+            model.module.load_state_dict(ckp['net'])
         else:
-            model.load_state_dict(ckp["net"])
-        optimizer.load_state_dict(ckp["optim"])
-        scheduler.load_state_dict(ckp["sched"])
-        start_epoch = ckp["epoch"]
-        best_acc = ckp["acc"]
+            model.load_state_dict(ckp['net'])
+        optimizer.load_state_dict(ckp['optim'])
+        scheduler.load_state_dict(ckp['sched'])
+        start_epoch = ckp['epoch']
+        best_acc = ckp['acc']
 
     if opt.eval:
-        acc, _ = eval(model, testloader, criterion, device)
-        print("[info] the base accuracy is {:.4f}%".format(acc))
+        acc, _ = test(model, testloader, criterion, device)
+        print('[info] the base accuracy is {:.4f}%'.format(acc))
         _, (_, _, perturbloader) = load_dataset(opt, noise=(False, True))
-        acc, _ = eval(model, perturbloader, criterion, device)
-        print("[info] the robustness accuracy is {:.4f}%".format(acc))
+        acc, _ = test(model, perturbloader, criterion, device)
+        print('[info] the robustness accuracy is {:.4f}%'.format(acc))
         return
 
     for epoch in range(start_epoch + 1, opt.max_epoch):
-        print("Epoch: {}".format(epoch))
+        print('Epoch: {}'.format(epoch))
         train(model, trainloader, optimizer, criterion, device)
-        acc, _ = eval(model, testloader, criterion, device)
+        acc, _ = test(model, testloader, criterion, device)
         if acc > best_acc:
-            print("Saving...")
+            print('Saving...')
             state = {
-                "epoch": epoch,
-                "net": model.state_dict() if not opt.parallel else model.module.state_dict(),
-                "optim": optimizer.state_dict(),
-                "sched": scheduler.state_dict(),
-                "acc": acc
+                'epoch': epoch,
+                'net': model.state_dict() if not opt.parallel else model.module.state_dict(),
+                'optim': optimizer.state_dict(),
+                'sched': scheduler.state_dict(),
+                'acc': acc
             }
-            torch.save(state, get_model_path(opt, state="primeval"))
+            torch.save(state, get_model_path(opt, state='pretrained'))
             best_acc = acc
         scheduler.step()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
 

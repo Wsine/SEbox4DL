@@ -1,5 +1,4 @@
 import os
-import errno
 import json
 import pickle
 import functools
@@ -47,6 +46,7 @@ def cache_object(filename):
                 if not os.path.isdir(cache_dir):
                     os.makedirs(cache_dir)
                 pickle.dump(cache, open(filepath, 'wb'))
+                print('[info] new {} cache set'.format(func.__name__))
             else:
                 print('[info] {} cache hit'.format(func.__name__))
             return cache[paramskey]
@@ -77,16 +77,6 @@ def export_object(opt, filename, code, obj):
             pickle.dump(obj, f)
         else:
             json.dump(obj, f, indent=2, ensure_ascii=False)
-
-    sympath = os.path.join(dstdir, f"{filename}")
-    try:
-        os.symlink(f"{basename}_{code}{ext}", sympath)
-    except OSError as e:
-        if e.errno == errno.EEXIST:
-            os.remove(sympath)
-            os.symlink(f"{basename}_{code}{ext}", sympath)
-        else:
-            raise e
 
 
 # borrow from: https://stackoverflow.com/questions/31174295/

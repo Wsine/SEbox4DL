@@ -3,29 +3,35 @@ import torch
 from utils import get_model_path
 
 
-def load_model(opt):
-    if "cifar" in opt.dataset:
-        num_classes = (int)(opt.dataset.lstrip("cifar"))
-        if opt.model == "resnet34":
-            from models.cifar.resnet import ResNet34
-            return ResNet34(num_classes=num_classes)
-        elif opt.model == "dcalexnet":
+def load_model(opt, pretrained=False):
+    if 'cifar' in opt.dataset:
+        if opt.model == 'dcalexnet':
+            num_classes = (int)(opt.dataset.lstrip('cifar'))
             from models.cifar.dcalexnet import DcAlexNet
-            return DcAlexNet(num_classes=num_classes)
-        elif opt.model == "resnext29":
-            from models.cifar.resnext import ResNeXt29_4x64d
-            return ResNeXt29_4x64d(num_classes=num_classes)
+            model = DcAlexNet(num_classes=num_classes)
+            if pretrained is True:
+                model = resume_model(opt, model, state='pretrained')
         else:
-            raise ValueError("Invalid model name")
+            model = torch.hub.load(
+                'chenyaofo/pytorch-cifar-models',
+                f'{opt.dataset}_{opt.model}',
+                pretrained=pretrained
+            )
+        return model
     else:
-        raise ValueError("Invalid dataset name")
+        raise ValueError('Invalid dataset name')
 
-def resume_model(opt, state="best"):
-    model = load_model(opt)
+
+def load_checkpoint(opt, state='pretrained'):
     ckp = torch.load(
         get_model_path(opt, state=state),
-        map_location=torch.device("cpu")
+        map_location=torch.device('cpu')
     )
-    model.load_state_dict(ckp["net"])
-    return model, ckp
+    return ckp
+
+
+def resume_model(opt, model, state='pretrained'):
+    ckp = load_checkpoint(opt, state)
+    model.load_state_dict(ckp['net'])
+    return model
 

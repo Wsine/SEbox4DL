@@ -4,18 +4,18 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 
-from model import resume_model
+from model import load_checkpoint, load_model
 from dataset import load_dataset
 from arguments import selparser as parser, Args
-from train import train, eval
+from train import train, test
 from utils import *
 
 
-dispatcher = AttrDispatcher("fs_method")
+dispatcher = AttrDispatcher('fs_method')
 
 
 def overall_improve(opt, model, ckp, dataloaders, device):
-    print("[info] Overall improvement")
+    print('[info] Overall improvement')
     model1 = copy.deepcopy(model).to(device)
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(
@@ -23,15 +23,15 @@ def overall_improve(opt, model, ckp, dataloaders, device):
         lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
-    optimizer.load_state_dict(ckp["optim"])
-    scheduler.load_state_dict(ckp["sched"])
+    optimizer.load_state_dict(ckp['optim'])
+    scheduler.load_state_dict(ckp['sched'])
 
     trainloader, _, testloader = dataloaders
     train(model1, trainloader, optimizer, criterion, device)
-    eval(model1, testloader, criterion, device)
+    test(model1, testloader, criterion, device)
 
     state = model.state_dict()
-    state1 = model1.to("cpu").state_dict()
+    state1 = model1.to('cpu').state_dict()
     dstate1 = {k: state1[k] - state[k] for k in state.keys()}
 
     return dstate1
@@ -45,8 +45,8 @@ def construct_error_bias_dataloader(opt, model, datasets, dataloaders, device):
     model2 = copy.deepcopy(model).to(device)
 
     criterion = torch.nn.CrossEntropyLoss()
-    _, (pred_labels, trg_labels) = eval(
-        model2, valloader, criterion, device, desc=" Extract", return_label=True)
+    _, (pred_labels, trg_labels) = test(
+        model2, valloader, criterion, device, desc=' Extract', return_label=True)
     pred_result = pred_labels.eq(trg_labels).tolist()
 
     class_weights = [0 for _ in range(num_classes)]
@@ -70,7 +70,7 @@ def construct_error_bias_dataloader(opt, model, datasets, dataloaders, device):
 
 
 def error_bias_improve(opt, model, ckp, datasets, dataloaders, device):
-    print("[info] Error bias improvement")
+    print('[info] Error bias improvement')
 
     classloader = construct_error_bias_dataloader(opt, model, datasets, dataloaders, device)
     _, _, testloader = dataloaders
@@ -82,14 +82,14 @@ def error_bias_improve(opt, model, ckp, datasets, dataloaders, device):
         lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
-    optimizer.load_state_dict(ckp["optim"])
-    scheduler.load_state_dict(ckp["sched"])
+    optimizer.load_state_dict(ckp['optim'])
+    scheduler.load_state_dict(ckp['sched'])
 
     train(model2, classloader, optimizer, criterion, device)
-    eval(model2, testloader, criterion, device)
+    test(model2, testloader, criterion, device)
 
     state = model.state_dict()
-    state2 = model2.to("cpu").state_dict()
+    state2 = model2.to('cpu').state_dict()
     dstate2 = {k: state2[k] - state[k] for k in state.keys()}
 
     return dstate2
@@ -103,7 +103,7 @@ def differentiate_weights(opt, oa_dstate, oe_dstate):
 
     suspicious = {}
 
-    state_keys = [k for k in oa_dstate.keys() if "conv" in k]
+    state_keys = [k for k in oa_dstate.keys() if 'conv' in k]
     for k in state_keys:
         num_filters = oa_dstate[k].size(0)
         oak_dstate = _mask_out_smallest(oa_dstate[k])
@@ -117,7 +117,7 @@ def differentiate_weights(opt, oa_dstate, oe_dstate):
     return suspicious
 
 
-@dispatcher.register("bpindiret")
+@dispatcher.register('bpindiret')
 def backprob_indirection(opt, model, ckp, device):
     datasets, dataloaders = load_dataset(opt, return_set=True, return_loader=True)
 
@@ -138,9 +138,9 @@ def extract_feature_map(lname, model, dataloader, device):
     handle = module.register_forward_hook(_hook)
 
     criterion = torch.nn.CrossEntropyLoss()
-    base_acc, (pred_labels, trg_labels) = eval(
+    base_acc, (pred_labels, trg_labels) = test(
         model, dataloader, criterion, device,
-        desc="Extract", return_label=True, tqdm_leave=False)
+        desc='Extract', return_label=True, tqdm_leave=False)
     feature_map = torch.cat(feature_map, dim=0)
 
     handle.remove()
@@ -148,47 +148,7 @@ def extract_feature_map(lname, model, dataloader, device):
     return feature_map, (pred_labels, trg_labels), base_acc
 
 
-@dispatcher.register("featswap")
-@torch.no_grad()
-def featuremap_swap(opt, model, _, device):
-    _, (_, valloader1, _) = load_dataset(opt, noise=(False, False))
-    _, (_, valloader2, _) = load_dataset(opt, noise=(True, False), prob=1)
-    model1 = model.to(device)
-    model2 = copy.deepcopy(model).to(device)
-    model1.eval()
-    model2.eval()
-
-    criterion = torch.nn.CrossEntropyLoss()
-
-    suspicious = {}
-    num_modules = len(list(model2.modules()))
-    for lname, module in tqdm(model2.named_modules(), total=num_modules, desc="Modules"):
-        if isinstance(module, nn.Conv2d):
-            fmaps, _, base_acc = extract_feature_map(lname, model1, valloader1, device)
-            fmaps_idx = 0
-
-            def _substitute_feature(filter_index):
-                def __hook(module, finput, foutput):
-                    batch_size = foutput.size(0)
-                    foutput[:, filter_index] = fmaps[fmaps_idx:fmaps_idx+batch_size, filter_index]
-                    fmaps_idx += batch_size
-                    return foutput
-                return __hook
-
-            recover = []
-            for fidx in tqdm(range(module.out_channels), desc="Filters", leave=False):
-                handler = module.register_forward_hook(_substitute_feature(fidx))
-                swap_acc, _ = eval(model, valloader2, criterion, device, tqdm_leave=False)
-                recover.append(base_acc - swap_acc)
-                handler.remove()
-
-            indices = sorted(range(len(recover)), key=lambda i: recover[i])
-            suspicious[lname] = indices
-
-    return suspicious
-
-
-@dispatcher.register("featwgting")
+@dispatcher.register('featwgting')
 def feature_weighting(opt, model, _, device):
     _, (_, valloader, _) = load_dataset(opt)
     num_classes = Args.get_num_class(opt.dataset)
@@ -213,12 +173,12 @@ def feature_weighting(opt, model, _, device):
         cls_err_matrix.append(clsi_err_mat)
     cls_err_matrix = torch.stack(cls_err_matrix, dim=0)
 
-    print("[info] Done of weighting the feature activations")
+    print('[info] Done of weighting the feature activations')
 
     return cls_err_matrix
 
 
-@dispatcher.register("wgtchange")
+@dispatcher.register('wgtchange')
 def weight_change(opt, model, _, device):
     _, (_, valloader, testloader) = load_dataset(opt, noise=(True, True), prob=1)
     model = model.to(device)
@@ -241,9 +201,9 @@ def weight_change(opt, model, _, device):
 
     best_acc = 0
     for epoch in range(5):
-        print("Calibrate epoch: {}".format(epoch))
+        print('Calibrate epoch: {}'.format(epoch))
         train(model, valloader, optimizer, criterion, device)
-        acc, _ = eval(model, testloader, criterion, device)
+        acc, _ = test(model, testloader, criterion, device)
         if acc > best_acc:
             updated_state = model.state_dict()
             best_acc = acc
@@ -251,7 +211,7 @@ def weight_change(opt, model, _, device):
 
     suspicious = {}
     for k in updated_state.keys():
-        if not "conv" in k: continue
+        if not 'conv' in k: continue
         num_filters = updated_state[k].size(0)
         diff_state = updated_state[k] - origin_state[k]
         sum_change = diff_state.abs().view(num_filters, -1).sum(dim=1)
@@ -262,7 +222,7 @@ def weight_change(opt, model, _, device):
     return suspicious
 
 
-@dispatcher.register("lowrank")
+@dispatcher.register('lowrank')
 def lower_rank(opt, model, _, device):
     _, (_, valloader, _) = load_dataset(opt, noise=(True, False), prob=1)
     model = model.to(device)
@@ -270,7 +230,7 @@ def lower_rank(opt, model, _, device):
 
     suspicious = {}
     num_modules = len(list(model.modules()))
-    for lname, module in tqdm(model.named_modules(), total=num_modules, desc="Modules"):
+    for lname, module in tqdm(model.named_modules(), total=num_modules, desc='Modules'):
         if isinstance(module, nn.Conv2d):
             fmaps, *_ = extract_feature_map(lname, model, valloader, device)
             fmaps = torch.nn.functional.relu(fmaps)
@@ -287,13 +247,13 @@ def lower_rank(opt, model, _, device):
     return suspicious
 
 
-@dispatcher.register("perfloss")
+@dispatcher.register('perfloss')
 def performance_loss(opt, model, _, device):
     _, (_, valloader, _) = load_dataset(opt, noise=(False, False))
     model = model.to(device)
     model.eval()
     criterion = torch.nn.CrossEntropyLoss()
-    base_acc, _ = eval(model, valloader, criterion, device)
+    base_acc, _ = test(model, valloader, criterion, device)
 
     def _mask_out_channel(chn):
         def __hook(module, finput, foutput):
@@ -303,12 +263,12 @@ def performance_loss(opt, model, _, device):
 
     suspicious = {}
     conv_names = [n for n, m in model.named_modules() if isinstance(m, nn.Conv2d)]
-    for lname in tqdm(conv_names, desc="Modules"):
+    for lname in tqdm(conv_names, desc='Modules'):
         module = rgetattr(model, lname)
         perfloss = []
-        for chn in tqdm(range(module.out_channels), desc="Filters", leave=False):
+        for chn in tqdm(range(module.out_channels), desc='Filters', leave=False):
             handle = module.register_forward_hook(_mask_out_channel(chn))
-            acc, _ = eval(model, valloader, criterion, device, tqdm_leave=False)
+            acc, _ = test(model, valloader, criterion, device, tqdm_leave=False)
             perfloss.append(base_acc - acc)
             handle.remove()
         indices = sorted(range(len(perfloss)), key=lambda i: perfloss[i])
@@ -317,20 +277,122 @@ def performance_loss(opt, model, _, device):
     return suspicious
 
 
+@dispatcher.register('featswap')
+@torch.no_grad()
+def featuremap_swap(opt, model, _, device):
+    _, valloader1 = load_dataset(opt, split='val', noise=False)
+    _, valloader2 = load_dataset(opt, split='val', noise=True, noise_type='replace')
+    model = model.to(device)
+
+    criterion = torch.nn.CrossEntropyLoss()
+    base_acc, _ = test(model, valloader2, criterion, device, tqdm_leave=False)
+
+    suspicious = {}
+    num_modules = len(list(model.modules()))
+    for lname, module in tqdm(model.named_modules(), total=num_modules, desc='Modules'):
+        if isinstance(module, nn.Conv2d):
+            fmaps, _, _ = extract_feature_map(lname, model, valloader1, device)
+
+            def _substitute_feature(filter_index):
+                def __hook(module, finput, foutput):
+                    global fmaps_idx
+                    batch_size = foutput.size(0)
+                    foutput[:, filter_index] = fmaps[fmaps_idx:fmaps_idx+batch_size, filter_index]
+                    fmaps_idx += batch_size
+                    return foutput
+                return __hook
+
+            recover = []
+            for fidx in tqdm(range(module.out_channels), desc='Filters', leave=False):
+                handler = module.register_forward_hook(_substitute_feature(fidx))
+                global fmaps_idx
+                fmaps_idx = 0
+                swap_acc, _ = test(model, valloader2, criterion, device, tqdm_leave=False)
+                recover.append(swap_acc - base_acc)
+                handler.remove()
+
+            score = sorted(recover, reverse=True)
+            indices = sorted(range(len(recover)), key=lambda i: recover[i], reverse=True)
+            suspicious[lname] = {
+                'score': score,
+                'indices': indices
+            }
+
+    return suspicious
+
+
+@dispatcher.register('mactcalib')
+@torch.no_grad()
+def multi_activation_calibrate(opt, model, _, device):
+    _, valloader1 = load_dataset(opt, split='val', noise=False)
+    _, valloader2 = load_dataset(opt, split='val', noise=True, noise_type='expand')
+    model = model.to(device)
+
+    criterion = torch.nn.CrossEntropyLoss()
+    base_acc, _ = test(model, valloader2, criterion, device, tqdm_leave=False)
+
+    suspicious = {}
+    num_modules = len(list(model.modules()))
+    for lname, module in tqdm(model.named_modules(), total=num_modules, desc='Modules'):
+        if isinstance(module, nn.Conv2d):
+            fmaps, _, _ = extract_feature_map(lname, model, valloader1, device)
+
+            def _substitute_feature(filter_index):
+                def __hook(module, finput, foutput):
+                    global fmaps_idx
+                    batch_size = foutput.size(0)
+                    sample_index = list(range(fmaps_idx, min(fmaps_idx+batch_size, fmaps.size(0)))) \
+                                 + list(range(0, max(0, fmaps_idx+batch_size-fmaps.size(0))))
+                    foutput[:, filter_index] = torch.where(
+                        fmaps[sample_index, filter_index] < 0,
+                        torch.zeros_like(foutput[:, filter_index]),
+                        foutput[:, filter_index]
+                    )
+                    foutput[:, filter_index] = torch.where(
+                        torch.logical_and(fmaps[sample_index, filter_index] > 0, foutput[:, filter_index] < 0),
+                        -foutput[:, filter_index],
+                        foutput[:, filter_index]
+                    )
+                    fmaps_idx = (fmaps_idx + batch_size) % fmaps.size(0)
+                    return foutput
+                return __hook
+
+            recover = []
+            for fidx in tqdm(range(module.out_channels), desc='Filters', leave=False):
+                handler = module.register_forward_hook(_substitute_feature(fidx))
+                global fmaps_idx
+                fmaps_idx = 0
+                calib_acc, _ = test(model, valloader2, criterion, device, tqdm_leave=False)
+                recover.append(calib_acc - base_acc)
+                handler.remove()
+
+            score = sorted(recover, reverse=True)
+            indices = sorted(range(len(recover)), key=lambda i: recover[i], reverse=True)
+            suspicious[lname] = {
+                'score': score,
+                'indices': indices
+            }
+
+    return suspicious
+
+
 def main():
     opt = parser.parse_args()
     print(opt)
+    guard_folder(opt)
 
-    device = torch.device(opt.device if torch.cuda.is_available() else "cpu")
-    model, ckp = resume_model(opt, state="primeval")
+    device = torch.device(f'cuda:{opt.gpu}' if opt.device == 'cuda' and torch.cuda.is_available() else 'cpu')
+    model = load_model(opt, pretrained=True)
+    ckp = load_checkpoint(opt) if opt.fs_method == 'bpindiret' else None
 
     result = dispatcher(opt, model, ckp, device)
-    result_name = "susp_filters.json"
-    if opt.fs_method == "featwgting":
-        result_name = "feature_error_probability.pkl"
+    if opt.fs_method == 'featwgting':
+        result_name = 'feature_error_probability.pkl'
+    else:
+        result_name = 'susp_filters.json'
     export_object(opt, result_name, opt.fs_method, result)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
 
