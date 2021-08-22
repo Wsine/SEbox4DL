@@ -249,7 +249,7 @@ def lower_rank(opt, model, _, device):
 
 @dispatcher.register('perfloss')
 def performance_loss(opt, model, _, device):
-    _, (_, valloader, _) = load_dataset(opt, noise=(False, False))
+    _, valloader = load_dataset(opt, split='val', noise=True, noise_type='expand')
     model = model.to(device)
     model.eval()
     criterion = torch.nn.CrossEntropyLoss()
@@ -271,52 +271,13 @@ def performance_loss(opt, model, _, device):
             acc, _ = test(model, valloader, criterion, device, tqdm_leave=False)
             perfloss.append(base_acc - acc)
             handle.remove()
+
+        score = sorted(perfloss)
         indices = sorted(range(len(perfloss)), key=lambda i: perfloss[i])
-        suspicious[lname] = indices
-
-    return suspicious
-
-
-@dispatcher.register('featswap')
-@torch.no_grad()
-def featuremap_swap(opt, model, _, device):
-    _, valloader1 = load_dataset(opt, split='val', noise=False)
-    _, valloader2 = load_dataset(opt, split='val', noise=True, noise_type='replace')
-    model = model.to(device)
-
-    criterion = torch.nn.CrossEntropyLoss()
-    base_acc, _ = test(model, valloader2, criterion, device, tqdm_leave=False)
-
-    suspicious = {}
-    num_modules = len(list(model.modules()))
-    for lname, module in tqdm(model.named_modules(), total=num_modules, desc='Modules'):
-        if isinstance(module, nn.Conv2d):
-            fmaps, _, _ = extract_feature_map(lname, model, valloader1, device)
-
-            def _substitute_feature(filter_index):
-                def __hook(module, finput, foutput):
-                    global fmaps_idx
-                    batch_size = foutput.size(0)
-                    foutput[:, filter_index] = fmaps[fmaps_idx:fmaps_idx+batch_size, filter_index]
-                    fmaps_idx += batch_size
-                    return foutput
-                return __hook
-
-            recover = []
-            for fidx in tqdm(range(module.out_channels), desc='Filters', leave=False):
-                handler = module.register_forward_hook(_substitute_feature(fidx))
-                global fmaps_idx
-                fmaps_idx = 0
-                swap_acc, _ = test(model, valloader2, criterion, device, tqdm_leave=False)
-                recover.append(swap_acc - base_acc)
-                handler.remove()
-
-            score = sorted(recover, reverse=True)
-            indices = sorted(range(len(recover)), key=lambda i: recover[i], reverse=True)
-            suspicious[lname] = {
-                'score': score,
-                'indices': indices
-            }
+        suspicious[lname] = {
+            'score': score,
+            'indices': indices
+        }
 
     return suspicious
 
@@ -376,6 +337,52 @@ def multi_activation_calibrate(opt, model, _, device):
     return suspicious
 
 
+@dispatcher.register('featswap')
+@torch.no_grad()
+def featuremap_swap(opt, model, _, device):
+    assert hasattr(opt, 'gblur_std'), 'argument gblur_std should be set manually'
+    _, valloader1 = load_dataset(opt, split='val', noise=False)
+    #  _, valloader2 = load_dataset(opt, split='val', noise=True, noise_type='replace', gblur_std=opt.gblur_std)
+    _, valloader2 = load_dataset(opt, split='val', noise=True, noise_type='random')
+    model = model.to(device)
+
+    criterion = torch.nn.CrossEntropyLoss()
+    base_acc, _ = test(model, valloader2, criterion, device, tqdm_leave=False)
+
+    suspicious = {}
+    num_modules = len(list(model.modules()))
+    for lname, module in tqdm(model.named_modules(), total=num_modules, desc='Modules'):
+        if isinstance(module, nn.Conv2d):
+            fmaps, _, _ = extract_feature_map(lname, model, valloader1, device)
+
+            def _substitute_feature(filter_index):
+                def __hook(module, finput, foutput):
+                    global fmaps_idx
+                    batch_size = foutput.size(0)
+                    foutput[:, filter_index] = fmaps[fmaps_idx:fmaps_idx+batch_size, filter_index]
+                    fmaps_idx += batch_size
+                    return foutput
+                return __hook
+
+            recover = []
+            for fidx in tqdm(range(module.out_channels), desc='Filters', leave=False):
+                handler = module.register_forward_hook(_substitute_feature(fidx))
+                global fmaps_idx
+                fmaps_idx = 0
+                swap_acc, _ = test(model, valloader2, criterion, device, tqdm_leave=False)
+                recover.append(swap_acc - base_acc)
+                handler.remove()
+
+            score = sorted(recover, reverse=True)
+            indices = sorted(range(len(recover)), key=lambda i: recover[i], reverse=True)
+            suspicious[lname] = {
+                'score': score,
+                'indices': indices
+            }
+
+    return suspicious
+
+
 def main():
     opt = parser.parse_args()
     print(opt)
@@ -390,7 +397,13 @@ def main():
         result_name = 'feature_error_probability.pkl'
     else:
         result_name = 'susp_filters.json'
-    export_object(opt, result_name, opt.fs_method, result)
+
+    if opt.gblur_std is not None:
+        a, b = int(opt.gblur_std), int(opt.gblur_std*10%10)
+        suffix = f'{opt.fs_method}_std{a}d{b}'
+    else:
+        suffix = opt.fs_method
+    export_object(opt, result_name, suffix, result)
 
 
 if __name__ == '__main__':

@@ -9,10 +9,10 @@ import pandas as pd
 from tqdm import tqdm
 from sklearn.metrics import confusion_matrix
 
-from model import resume_model
+from model import load_model
 from dataset import load_dataset
 from arguments import corparser as parser
-from train import train, eval
+from train import train, test
 from utils import *
 
 
@@ -96,30 +96,39 @@ class NoneCorrect(nn.Module):
 
 
 def construct_model(opt, model, patch=True):
+    if opt.gblur_std is not None:
+        a, b = int(opt.gblur_std), int(opt.gblur_std*10%10)
+        susp_filename = f'susp_filters_{opt.fs_method}_std{a}d{b}.json'
+    else:
+        susp_filename = f'susp_filters_{opt.fs_method}.json'
     sus_filters = json.load(open(os.path.join(
-        opt.output_dir, opt.dataset, opt.model, f"susp_filters_{opt.fs_method}.json"
+        opt.output_dir, opt.dataset, opt.model, susp_filename
+        #  opt.output_dir, opt.dataset, opt.model, f"susp_filters_{opt.fs_method}.json"
+        #  opt.output_dir, opt.dataset, opt.model, f"susp_filters_{opt.fs_method}_std0d5.json"
+        #  opt.output_dir, opt.dataset, opt.model, f"susp_filters_{opt.fs_method}_std3d0.json"
     )))
-    for idx, (name, ranking) in enumerate(sus_filters.items()):
+    for idx, (name, info) in enumerate(sus_filters.items()):
         layer_name = name.rstrip(".weight")
         module = rgetattr(model, layer_name)
 
-        if opt.correct_type == "crtunit":
-            r = 1.5 * opt.suspicious_ratio if idx == 0 else opt.suspicious_ratio
+        ranking = info['indices']
+        if opt.crt_type == "crtunit":
+            #  r = 1.5 * opt.susp_ratio if idx == 0 else opt.susp_ratio
+            r = opt.susp_ratio
             num_susp = int(len(ranking) * r)
-            indices = ranking[:num_susp]
+            indices = ranking[:num_susp] if opt.susp_side == 'front' else ranking[-num_susp:]
         else:
-            r = opt.suspicious_ratio
-            num_susp = int(len(ranking) * r)
-            indices = ranking[:num_susp]
-            while len(indices) % module.groups != 0:
-                num_susp += 1
-                indices = ranking[:num_susp]
+            num_susp = int(len(ranking) * opt.susp_ratio)
+            indices = ranking[:num_susp] if opt.susp_side == 'front' else ranking[-num_susp:]
+            #  while len(indices) % module.groups != 0:
+            #      num_susp += 1
+            #      indices = ranking[:num_susp]
 
-        if not patch:
+        if patch is False:
             correct_module = NoneCorrect(module, indices)
-        elif opt.correct_type == "crtunit":
+        elif opt.crt_type == "crtunit":
             correct_module = ConcatCorrect(module, indices)
-        elif opt.correct_type == "replace":
+        elif opt.crt_type == "replace":
             correct_module = ReplaceCorrect(module, indices)
         else:
             raise ValueError("Invalid correct type")
@@ -168,8 +177,9 @@ def coordinate_filters(opt, model):
 
 
 @dispatcher.register("patch")
-def patch(opt, model, ckp, device):
-    _, (trainloader, valloader, _) = load_dataset(opt, noise=(True, False))
+def patch(opt, model, device):
+    _, trainloader = load_dataset(opt, split='train', noise=True, noise_type='random')
+    _, valloader = load_dataset(opt, split='val', noise=True, noise_type='append')
 
     model = construct_model(opt, model)
     model = model.to(device)
@@ -189,41 +199,40 @@ def patch(opt, model, ckp, device):
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
-    best_acc, *_ = eval(model, valloader, criterion, device, desc="Baseline")
-    for epoch in range(0, opt.correct_epoch):
+    start_epoch = -1
+    if opt.resume or opt.eval:
+        ckp = torch.load(get_model_path(opt, state=f'correct_{opt.fs_method}_g{opt.gpu}'))
+        model.load_state_dict(ckp['net'])
+        optimizer.load_state_dict(ckp['optim'])
+        scheduler.load_state_dict(ckp['sched'])
+        start_epoch = ckp['cepoch']
+        best_acc = ckp['acc']
+    else:
+        best_acc, *_ = test(model, valloader, criterion, device, desc="Baseline")
+
+    for epoch in range(start_epoch + 1, opt.crt_epoch):
         print("Epoch: {}".format(epoch))
         train(model, trainloader, optimizer, criterion, device)
-        acc, *_ = eval(model, valloader, criterion, device)
+        acc, *_ = test(model, valloader, criterion, device)
         if acc > best_acc:
             print("Saving...")
             state = {
-                "epoch": ckp["epoch"],
                 "cepoch": epoch,
                 "net": model.state_dict(),
                 "optim": optimizer.state_dict(),
                 "sched": scheduler.state_dict(),
                 "acc": acc
             }
-            torch.save(state, get_model_path(opt, state=f"correct_{opt.fs_method}"))
+            torch.save(state, get_model_path(opt, state=f"correct_{opt.fs_method}_g{opt.gpu}"))
             best_acc = acc
         scheduler.step()
-        if opt.correct_type == "replace":
-            coordinate_filters(opt, model)
+        #  if opt.crt_type == "replace":
+        #      coordinate_filters(opt, model)
     print("[info] the best retrain accuracy is {:.4f}%".format(best_acc))
-
-    del trainloader, valloader
-    state = torch.load(get_model_path(opt, state=f"correct_{opt.fs_method}"))
-    model.load_state_dict(state["net"])
-    _, (_, _, testloader) = load_dataset(opt, noise=(False, False))
-    normal_acc, *_ = eval(model, testloader, criterion, device, desc="Normal")
-    print("[info] the normal accuracy is {:.4f}%".format(normal_acc))
-    _, (_, _, testloader) = load_dataset(opt, noise=(False, True), prob=1)
-    robust_acc, *_ = eval(model, testloader, criterion, device, desc="Robustness")
-    print("[info] the robustness accuracy is {:.4f}%".format(robust_acc))
 
 
 @dispatcher.register("fintune")
-def finetune(opt, model, ckp, device):
+def finetune(opt, model, device):
     _, (trainloader, valloader, _) = load_dataset(opt, noise=(True, False))
 
     model = model.to(device)
@@ -235,15 +244,14 @@ def finetune(opt, model, ckp, device):
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
-    best_acc, *_ = eval(model, valloader, criterion, device, desc="Baseline")
-    for epoch in range(0, opt.correct_epoch):
+    best_acc, *_ = test(model, valloader, criterion, device, desc="Baseline")
+    for epoch in range(0, opt.crt_epoch):
         print("Epoch: {}".format(epoch))
         train(model, trainloader, optimizer, criterion, device)
-        acc, *_ = eval(model, valloader, criterion, device)
+        acc, *_ = test(model, valloader, criterion, device)
         if acc > best_acc:
             print("Saving...")
             state = {
-                "epoch": ckp["epoch"],
                 "cepoch": epoch,
                 "net": model.state_dict(),
                 "optim": optimizer.state_dict(),
@@ -259,21 +267,21 @@ def finetune(opt, model, ckp, device):
     state = torch.load(get_model_path(opt, state=f"correct_{opt.fs_method}"))
     model.load_state_dict(state["net"])
     _, (_, _, testloader) = load_dataset(opt, noise=(False, False))
-    normal_acc, *_ = eval(model, testloader, criterion, device, desc="Normal")
+    normal_acc, *_ = test(model, testloader, criterion, device, desc="Normal")
     print("[info] the normal accuracy is {:.4f}%".format(normal_acc))
     _, (_, _, testloader) = load_dataset(opt, noise=(False, True), prob=1)
-    robust_acc, *_ = eval(model, testloader, criterion, device, desc="Robustness")
+    robust_acc, *_ = test(model, testloader, criterion, device, desc="Robustness")
     print("[info] the robustness accuracy is {:.4f}%".format(robust_acc))
 
 
 @dispatcher.register("calibrate")
 @torch.no_grad()
-def calibrate(opt, model, _, device):
+def calibrate(opt, model, device):
     _, (_, _, testloader) = load_dataset(opt)
     model = model.to(device)
 
     criterion = torch.nn.CrossEntropyLoss()
-    base_acc, (preds, trgs) = eval(model, testloader, criterion, device, return_label=True)
+    base_acc, (preds, trgs) = test(model, testloader, criterion, device, return_label=True)
     print("Base accuracy is {:.4f}%".format(base_acc))
     base_corrs = preds.eq(trgs)
 
@@ -299,7 +307,7 @@ def calibrate(opt, model, _, device):
             m = module
     m.register_forward_hook(_hook)
 
-    _, (preds, _) = eval(model, testloader, criterion, device, return_label=True)
+    _, (preds, _) = test(model, testloader, criterion, device, return_label=True)
 
     least_err_index = torch.cat(least_err_index, dim=0)
     decision_corrs = preds.view(-1, 1).eq(least_err_index).sum(dim=1)
@@ -349,6 +357,7 @@ def dualeval(model1, model2, valloader, device):
 
     model1.eval()
     model2.eval()
+
     correct, total = 0, 0
     with tqdm(valloader, desc="DualEval", leave=True) as tepoch:
         for inputs, targets in tepoch:
@@ -358,10 +367,14 @@ def dualeval(model1, model2, valloader, device):
 
             gini1 = _gini(outputs1)
             gini2 = _gini(outputs2)
+            #  moutputs = F.softmax(outputs1, dim=-1) + F.softmax(outputs2, dim=-1)
+            #  gini2 = _gini(moutputs)
+            #  diff_gini = (gini2 - gini1) < 0
             _, predicted1 = outputs1.max(1)
             _, predicted2 = outputs2.max(1)
 
             predicted = torch.where(gini1 < gini2, predicted1, predicted2)
+            #  predicted = torch.where(diff_gini, predicted1, predicted2)
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
 
@@ -373,15 +386,65 @@ def dualeval(model1, model2, valloader, device):
 
 
 @dispatcher.register("dual")
-def dual(opt, model, ckp, device):
+def dual(opt, model, device):
     # state1: finetune classifier1 only
     _, (trainloader, _, testloader) = load_dataset(opt, noise=(False, False))
     model2 = copy.deepcopy(model)
-    model2 = construct_model(opt, model2, patch=False)
-    model2 = model2.to(device)
+    #  model2 = construct_model(opt, model2, patch=False)
+    #  model2 = model2.to(device)
+    #
+    #  for name, module in model2.named_modules():
+    #      if isinstance(module, nn.Linear):
+    #          for param in module.parameters():
+    #              param.requires_grad = True
+    #      else:
+    #          for param in module.parameters():
+    #              param.requires_grad = False
+    #
+    #  criterion = LabelSmoothingLoss(smoothing=0.025)
+    #  optimizer = torch.optim.SGD(
+    #      filter(lambda p: p.requires_grad, model2.parameters()),
+    #      lr=opt.lr*0.1, momentum=opt.momentum, weight_decay=opt.weight_decay
+    #  )
+    #  scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
+    #
+    #  best_acc = 0
+    #  for epoch in range(0, opt.crt_epoch//3):
+    #      print("Epoch: {}".format(epoch))
+    #      train(model2, trainloader, optimizer, criterion, device)
+    #      acc, *_ = eval(model2, testloader, criterion, device)
+    #      if acc > best_acc:
+    #          print("Saving...")
+    #          state = {
+    #              "fepoch": epoch,
+    #              "net": model2.state_dict(),
+    #              "optim": optimizer.state_dict(),
+    #              "sched": scheduler.state_dict(),
+    #              "acc": acc
+    #          }
+    #          torch.save(state, get_model_path(opt, state=f"correct_{opt.fs_method}_none"))
+    #          best_acc = acc
+    #      scheduler.step()
+    #  print("[info] the finetune accuracy is {:.4f}%".format(best_acc))
+    #  model2 = model2.cpu()
 
-    for name, module in model2.named_modules():
-        if isinstance(module, nn.Linear):
+    # state2: train classifier2 and patch module
+    _, (trainloader, valloader, _) = load_dataset(opt, noise=(True, False), prob=1)
+    model3 = copy.deepcopy(model)
+    model3 = construct_model(opt, model3, patch=True)
+    model3 = model3.to(device)
+
+    for name, module in model3.named_modules():
+        #  if isinstance(module, nn.Linear) or "cru" in name:
+        if "cru" in name:
+            if "cru" in name and opt.crt_type == "replace":
+                conv_module_name = name.rstrip(".cru") + ".conv"
+                conv_module = rgetattr(model3, conv_module_name)
+                indices = rgetattr(model3, name.rstrip(".cru")).indices
+                state_dict = conv_module.state_dict()
+                for k in state_dict:
+                    state_dict[k] = state_dict[k][indices]
+                module.load_state_dict(state_dict)
             for param in module.parameters():
                 param.requires_grad = True
         else:
@@ -390,62 +453,19 @@ def dual(opt, model, ckp, device):
 
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(
-        filter(lambda p: p.requires_grad, model2.parameters()),
-        lr=opt.lr*0.1, momentum=opt.momentum, weight_decay=opt.weight_decay
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
-
-    best_acc = 0
-    for epoch in range(0, opt.correct_epoch//2):
-        print("Epoch: {}".format(epoch))
-        train(model2, trainloader, optimizer, criterion, device)
-        acc, *_ = eval(model2, testloader, criterion, device)
-        if acc > best_acc:
-            print("Saving...")
-            state = {
-                "epoch": ckp["epoch"],
-                "fepoch": epoch,
-                "net": model2.state_dict(),
-                "optim": optimizer.state_dict(),
-                "sched": scheduler.state_dict(),
-                "acc": acc
-            }
-            torch.save(state, get_model_path(opt, state=f"correct_{opt.fs_method}_none"))
-            best_acc = acc
-        scheduler.step()
-    print("[info] the finetune accuracy is {:.4f}%".format(best_acc))
-    model2 = model2.cpu()
-
-    # state2: train classifier2 and patch module
-    _, (trainloader, valloader, _) = load_dataset(opt, noise=(True, True), prob=1)
-    model3 = copy.deepcopy(model)
-    model3 = construct_model(opt, model3, patch=True)
-    model3 = model3.to(device)
-
-    for name, module in model3.named_modules():
-        if isinstance(module, nn.Linear) or "cru" in name:
-            for param in module.parameters():
-                param.requires_grad = True
-        else:
-            for param in module.parameters():
-                param.requires_grad = False
-
-    criterion = LabelSmoothingLoss(smoothing=0.1)
-    optimizer = torch.optim.SGD(
         filter(lambda p: p.requires_grad, model3.parameters()),
         lr=opt.lr*0.5, momentum=opt.momentum, weight_decay=opt.weight_decay
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
     best_acc = 0
-    for epoch in range(0, opt.correct_epoch):
+    for epoch in range(0, opt.crt_epoch):
         print("Epoch: {}".format(epoch))
         train(model3, trainloader, optimizer, criterion, device)
-        acc, *_ = eval(model3, valloader, criterion, device)
+        acc, *_ = test(model3, valloader, criterion, device)
         if acc > best_acc:
             print("Saving...")
             state = {
-                "epoch": ckp["epoch"],
                 "pepoch": epoch,
                 "net": model3.state_dict(),
                 "optim": optimizer.state_dict(),
@@ -458,22 +478,30 @@ def dual(opt, model, ckp, device):
     print("[info] the validated robust accuracy is {:.4f}%".format(best_acc))
 
     # Evaluate
+    ckp = torch.load(get_model_path(opt, state=f"correct_{opt.fs_method}_none"))
+    model2.load_state_dict(ckp["net"])
     model2 = model2.to(device)
+    ckp = torch.load(get_model_path(opt, state=f"correct_{opt.fs_method}_patch"))
+    model3.load_state_dict(ckp["net"])
     _, (_, _, testloader) = load_dataset(opt, noise=(False, False))
     std_acc = dualeval(model2, model3, testloader, device)
+    #  std_acc, *_ = test(model2, testloader, criterion, device)
     print("[info] the normal accuracy is {:.4f}%".format(std_acc))
     _, (_, _, testloader) = load_dataset(opt, noise=(False, True))
     rob_acc = dualeval(model2, model3, testloader, device)
-    print("[info] the normal accuracy is {:.4f}%".format(rob_acc))
+    #  rob_acc, *_ = test(model3, testloader, criterion, device)
+    print("[info] the robust accuracy is {:.4f}%".format(rob_acc))
 
 
 def main():
     opt = parser.parse_args()
     print(opt)
+    if opt.eval is True:
+        opt.crt_epoch = 0
 
-    device = torch.device(opt.device if torch.cuda.is_available() else "cpu")
-    model, ckp = resume_model(opt, state="primeval")
-    dispatcher(opt, model, ckp, device)
+    device = torch.device(f'cuda:{opt.gpu}' if opt.device == 'cuda' and torch.cuda.is_available() else 'cpu')
+    model = load_model(opt, pretrained=True)
+    dispatcher(opt, model, device)
 
 
 if __name__ == "__main__":
