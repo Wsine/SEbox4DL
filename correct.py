@@ -96,33 +96,19 @@ class NoneCorrect(nn.Module):
 
 
 def construct_model(opt, model, patch=True):
-    if opt.gblur_std is not None:
-        a, b = int(opt.gblur_std), int(opt.gblur_std*10%10)
-        susp_filename = f'susp_filters_{opt.fs_method}_std{a}d{b}.json'
-    else:
-        susp_filename = f'susp_filters_{opt.fs_method}.json'
     sus_filters = json.load(open(os.path.join(
-        opt.output_dir, opt.dataset, opt.model, susp_filename
-        #  opt.output_dir, opt.dataset, opt.model, f"susp_filters_{opt.fs_method}.json"
-        #  opt.output_dir, opt.dataset, opt.model, f"susp_filters_{opt.fs_method}_std0d5.json"
-        #  opt.output_dir, opt.dataset, opt.model, f"susp_filters_{opt.fs_method}_std3d0.json"
+        opt.output_dir, opt.dataset, opt.model, f"susp_filters_{opt.fs_method}.json"
     )))
-    for idx, (name, info) in enumerate(sus_filters.items()):
+    for name, info in sus_filters.items():
         layer_name = name.rstrip(".weight")
         module = rgetattr(model, layer_name)
 
         ranking = info['indices']
-        if opt.crt_type == "crtunit":
-            #  r = 1.5 * opt.susp_ratio if idx == 0 else opt.susp_ratio
-            r = opt.susp_ratio
-            num_susp = int(len(ranking) * r)
-            indices = ranking[:num_susp] if opt.susp_side == 'front' else ranking[-num_susp:]
-        else:
-            num_susp = int(len(ranking) * opt.susp_ratio)
-            indices = ranking[:num_susp] if opt.susp_side == 'front' else ranking[-num_susp:]
-            #  while len(indices) % module.groups != 0:
-            #      num_susp += 1
-            #      indices = ranking[:num_susp]
+        num_susp = int(len(ranking) * opt.susp_ratio)
+        indices = ranking[:num_susp] if opt.susp_side == 'front' else ranking[-num_susp:]
+        #  while len(indices) % module.groups != 0:
+        #      num_susp += 1
+        #      indices = ranking[:num_susp]
 
         if patch is False:
             correct_module = NoneCorrect(module, indices)
@@ -137,7 +123,7 @@ def construct_model(opt, model, patch=True):
 
 
 @torch.no_grad()
-def coordinate_filters(opt, model):
+def coordinate_filters(_, model):
     correct_rank = []
     for name, module in model.named_modules():
         if "cru" in name:
@@ -200,7 +186,7 @@ def patch(opt, model, device):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
     start_epoch = -1
-    if opt.resume or opt.eval:
+    if opt.resume:
         ckp = torch.load(get_model_path(opt, state=f'correct_{opt.fs_method}_g{opt.gpu}'))
         model.load_state_dict(ckp['net'])
         optimizer.load_state_dict(ckp['optim'])
@@ -496,8 +482,6 @@ def dual(opt, model, device):
 def main():
     opt = parser.parse_args()
     print(opt)
-    if opt.eval is True:
-        opt.crt_epoch = 0
 
     device = torch.device(f'cuda:{opt.gpu}' if opt.device == 'cuda' and torch.cuda.is_available() else 'cpu')
     model = load_model(opt, pretrained=True)

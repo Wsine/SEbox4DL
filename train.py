@@ -3,7 +3,7 @@ from tqdm import tqdm
 
 from dataset import load_dataset
 from model import load_model
-from arguments import trnparser as parser
+from arguments import commparser as parser
 from utils import *
 
 
@@ -91,7 +91,7 @@ def main():
 
     start_epoch = -1
     best_acc = 0
-    if opt.resume or opt.eval:
+    if opt.resume:
         ckp = torch.load(get_model_path(opt, state='pretrained'))
         if opt.parallel:
             model.module.load_state_dict(ckp['net'])
@@ -101,14 +101,6 @@ def main():
         scheduler.load_state_dict(ckp['sched'])
         start_epoch = ckp['epoch']
         best_acc = ckp['acc']
-
-    if opt.eval:
-        acc, _ = test(model, testloader, criterion, device)
-        print('[info] the base accuracy is {:.4f}%'.format(acc))
-        _, (_, _, perturbloader) = load_dataset(opt, noise=(False, True))
-        acc, _ = test(model, perturbloader, criterion, device)
-        print('[info] the robustness accuracy is {:.4f}%'.format(acc))
-        return
 
     for epoch in range(start_epoch + 1, opt.max_epoch):
         print('Epoch: {}'.format(epoch))

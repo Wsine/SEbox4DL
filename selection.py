@@ -340,9 +340,7 @@ def multi_activation_calibrate(opt, model, _, device):
 @dispatcher.register('featswap')
 @torch.no_grad()
 def featuremap_swap(opt, model, _, device):
-    assert hasattr(opt, 'gblur_std'), 'argument gblur_std should be set manually'
     _, valloader1 = load_dataset(opt, split='val', noise=False)
-    #  _, valloader2 = load_dataset(opt, split='val', noise=True, noise_type='replace', gblur_std=opt.gblur_std)
     _, valloader2 = load_dataset(opt, split='val', noise=True, noise_type='random')
     model = model.to(device)
 
@@ -398,12 +396,7 @@ def main():
     else:
         result_name = 'susp_filters.json'
 
-    if opt.gblur_std is not None:
-        a, b = int(opt.gblur_std), int(opt.gblur_std*10%10)
-        suffix = f'{opt.fs_method}_std{a}d{b}'
-    else:
-        suffix = opt.fs_method
-    export_object(opt, result_name, suffix, result)
+    export_object(opt, result_name, opt.fs_method, result)
 
 
 if __name__ == '__main__':
