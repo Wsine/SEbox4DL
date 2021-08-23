@@ -16,7 +16,7 @@ from train import train, test
 from utils import *
 
 
-dispatcher = AttrDispatcher("crt_method")
+dispatcher = AttrDispatcher('crt_method')
 
 
 class CorrectionUnit(nn.Module):
@@ -97,10 +97,10 @@ class NoneCorrect(nn.Module):
 
 def construct_model(opt, model, patch=True):
     sus_filters = json.load(open(os.path.join(
-        opt.output_dir, opt.dataset, opt.model, f"susp_filters_{opt.fs_method}.json"
+        opt.output_dir, opt.dataset, opt.model, f'susp_filters_{opt.fs_method}.json'
     )))
     for name, info in sus_filters.items():
-        layer_name = name.rstrip(".weight")
+        layer_name = name.rstrip('.weight')
         module = rgetattr(model, layer_name)
 
         ranking = info['indices']
@@ -112,12 +112,12 @@ def construct_model(opt, model, patch=True):
 
         if patch is False:
             correct_module = NoneCorrect(module, indices)
-        elif opt.crt_type == "crtunit":
+        elif opt.crt_type == 'crtunit':
             correct_module = ConcatCorrect(module, indices)
-        elif opt.crt_type == "replace":
+        elif opt.crt_type == 'replace':
             correct_module = ReplaceCorrect(module, indices)
         else:
-            raise ValueError("Invalid correct type")
+            raise ValueError('Invalid correct type')
         rsetattr(model, layer_name, correct_module)
     return model
 
@@ -126,10 +126,10 @@ def construct_model(opt, model, patch=True):
 def coordinate_filters(_, model):
     correct_rank = []
     for name, module in model.named_modules():
-        if "cru" in name:
-            conv_name = name.rstrip("cru") + "conv"
+        if 'cru' in name:
+            conv_name = name.rstrip('cru') + 'conv'
             conv_module = rgetattr(model, conv_name)
-            parent_name = name.rstrip(".cru")
+            parent_name = name.rstrip('.cru')
             parent_module = rgetattr(model, parent_name)
 
             chn_out, chn_in, kh, kw = conv_module.weight.size()
@@ -159,10 +159,10 @@ def coordinate_filters(_, model):
                     module.weight[i] = m
 
             correct_rank.append(len(unrank_idx))
-    print("Correct Rank: [{}]".format(' '.join(map(str, correct_rank))))
+    print('Correct Rank: [{}]'.format(' '.join(map(str, correct_rank))))
 
 
-@dispatcher.register("patch")
+@dispatcher.register('patch')
 def patch(opt, model, device):
     _, trainloader = load_dataset(opt, split='train', noise=True, noise_type='random')
     _, valloader = load_dataset(opt, split='val', noise=True, noise_type='append')
@@ -171,7 +171,7 @@ def patch(opt, model, device):
     model = model.to(device)
 
     for name, module in model.named_modules():
-        if "cru" in name:
+        if 'cru' in name:
             for param in module.parameters():
                 param.requires_grad = True
         else:
@@ -187,39 +187,40 @@ def patch(opt, model, device):
 
     start_epoch = -1
     if opt.resume:
-        ckp = torch.load(get_model_path(opt, state=f'correct_{opt.fs_method}_g{opt.gpu}'))
+        ckp = torch.load(get_model_path(opt, state=f'patch_{opt.fs_method}_g{opt.gpu}'))
         model.load_state_dict(ckp['net'])
         optimizer.load_state_dict(ckp['optim'])
         scheduler.load_state_dict(ckp['sched'])
         start_epoch = ckp['cepoch']
         best_acc = ckp['acc']
     else:
-        best_acc, *_ = test(model, valloader, criterion, device, desc="Baseline")
+        best_acc, *_ = test(model, valloader, criterion, device, desc='Baseline')
 
     for epoch in range(start_epoch + 1, opt.crt_epoch):
-        print("Epoch: {}".format(epoch))
+        print('Epoch: {}'.format(epoch))
         train(model, trainloader, optimizer, criterion, device)
         acc, *_ = test(model, valloader, criterion, device)
         if acc > best_acc:
-            print("Saving...")
+            print('Saving...')
             state = {
-                "cepoch": epoch,
-                "net": model.state_dict(),
-                "optim": optimizer.state_dict(),
-                "sched": scheduler.state_dict(),
-                "acc": acc
+                'cepoch': epoch,
+                'net': model.state_dict(),
+                'optim': optimizer.state_dict(),
+                'sched': scheduler.state_dict(),
+                'acc': acc
             }
-            torch.save(state, get_model_path(opt, state=f"correct_{opt.fs_method}_g{opt.gpu}"))
+            torch.save(state, get_model_path(opt, state=f'patch_{opt.fs_method}_g{opt.gpu}'))
             best_acc = acc
         scheduler.step()
-        #  if opt.crt_type == "replace":
+        #  if opt.crt_type == 'replace':
         #      coordinate_filters(opt, model)
-    print("[info] the best retrain accuracy is {:.4f}%".format(best_acc))
+    print('[info] the best retrain accuracy is {:.4f}%'.format(best_acc))
 
 
-@dispatcher.register("fintune")
+@dispatcher.register('finetune')
 def finetune(opt, model, device):
-    _, (trainloader, valloader, _) = load_dataset(opt, noise=(True, False))
+    _, trainloader = load_dataset(opt, split='train', noise=True, noise_type='random')
+    _, valloader = load_dataset(opt, split='val', noise=True, noise_type='append')
 
     model = model.to(device)
 
@@ -230,37 +231,27 @@ def finetune(opt, model, device):
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
-    best_acc, *_ = test(model, valloader, criterion, device, desc="Baseline")
+    best_acc, *_ = test(model, valloader, criterion, device, desc='Baseline')
     for epoch in range(0, opt.crt_epoch):
-        print("Epoch: {}".format(epoch))
+        print('Epoch: {}'.format(epoch))
         train(model, trainloader, optimizer, criterion, device)
         acc, *_ = test(model, valloader, criterion, device)
         if acc > best_acc:
-            print("Saving...")
+            print('Saving...')
             state = {
-                "cepoch": epoch,
-                "net": model.state_dict(),
-                "optim": optimizer.state_dict(),
-                "sched": scheduler.state_dict(),
-                "acc": acc
+                'cepoch': epoch,
+                'net': model.state_dict(),
+                'optim': optimizer.state_dict(),
+                'sched': scheduler.state_dict(),
+                'acc': acc
             }
-            torch.save(state, get_model_path(opt, state=f"correct_{opt.fs_method}"))
+            torch.save(state, get_model_path(opt, state=f'finetune_g{opt.gpu}'))
             best_acc = acc
         scheduler.step()
-    print("[info] the best retrain accuracy is {:.4f}%".format(best_acc))
-
-    del trainloader, valloader
-    state = torch.load(get_model_path(opt, state=f"correct_{opt.fs_method}"))
-    model.load_state_dict(state["net"])
-    _, (_, _, testloader) = load_dataset(opt, noise=(False, False))
-    normal_acc, *_ = test(model, testloader, criterion, device, desc="Normal")
-    print("[info] the normal accuracy is {:.4f}%".format(normal_acc))
-    _, (_, _, testloader) = load_dataset(opt, noise=(False, True), prob=1)
-    robust_acc, *_ = test(model, testloader, criterion, device, desc="Robustness")
-    print("[info] the robustness accuracy is {:.4f}%".format(robust_acc))
+    print('[info] the best retrain accuracy is {:.4f}%'.format(best_acc))
 
 
-@dispatcher.register("calibrate")
+@dispatcher.register('calibrate')
 @torch.no_grad()
 def calibrate(opt, model, device):
     _, (_, _, testloader) = load_dataset(opt)
@@ -268,12 +259,12 @@ def calibrate(opt, model, device):
 
     criterion = torch.nn.CrossEntropyLoss()
     base_acc, (preds, trgs) = test(model, testloader, criterion, device, return_label=True)
-    print("Base accuracy is {:.4f}%".format(base_acc))
+    print('Base accuracy is {:.4f}%'.format(base_acc))
     base_corrs = preds.eq(trgs)
 
     cls_err_matrix = pickle.load(open(os.path.join(
-        opt.output_dir, opt.dataset, opt.model, "feature_error_probability.pkl"
-    ), "rb"))
+        opt.output_dir, opt.dataset, opt.model, 'feature_error_probability.pkl'
+    ), 'rb'))
     cls_err_matrix = cls_err_matrix.to(device)
     num_classes = cls_err_matrix.size(0)
 
@@ -299,14 +290,14 @@ def calibrate(opt, model, device):
     decision_corrs = preds.view(-1, 1).eq(least_err_index).sum(dim=1)
     cf_mat = confusion_matrix(base_corrs, decision_corrs)
     df = pd.DataFrame(cf_mat/cf_mat.sum(), index=[0, 1], columns=[0, 1])
-    print("Decison Confusion Matrix:\n{}".format(df))
+    print('Decison Confusion Matrix:\n{}'.format(df))
 
 
 # Borrow from: https://stackoverflow.com/questions/55681502
 #   /label-smoothing-in-pytorch/66773267#66773267
 class LabelSmoothingLoss(torch.nn.Module):
     def __init__(self, smoothing: float = 0.1,
-                 reduction="mean", weight=None):
+                 reduction='mean', weight=None):
         super(LabelSmoothingLoss, self).__init__()
         self.smoothing   = smoothing
         self.reduction = reduction
@@ -345,7 +336,7 @@ def dualeval(model1, model2, valloader, device):
     model2.eval()
 
     correct, total = 0, 0
-    with tqdm(valloader, desc="DualEval", leave=True) as tepoch:
+    with tqdm(valloader, desc='DualEval', leave=True) as tepoch:
         for inputs, targets in tepoch:
             inputs, targets = inputs.to(device), targets.to(device)
             outputs1 = model1(inputs)
@@ -371,7 +362,7 @@ def dualeval(model1, model2, valloader, device):
     return acc
 
 
-@dispatcher.register("dual")
+@dispatcher.register('dual')
 def dual(opt, model, device):
     # state1: finetune classifier1 only
     _, (trainloader, _, testloader) = load_dataset(opt, noise=(False, False))
@@ -396,22 +387,22 @@ def dual(opt, model, device):
     #
     #  best_acc = 0
     #  for epoch in range(0, opt.crt_epoch//3):
-    #      print("Epoch: {}".format(epoch))
+    #      print('Epoch: {}'.format(epoch))
     #      train(model2, trainloader, optimizer, criterion, device)
     #      acc, *_ = eval(model2, testloader, criterion, device)
     #      if acc > best_acc:
-    #          print("Saving...")
+    #          print('Saving...')
     #          state = {
-    #              "fepoch": epoch,
-    #              "net": model2.state_dict(),
-    #              "optim": optimizer.state_dict(),
-    #              "sched": scheduler.state_dict(),
-    #              "acc": acc
+    #              'fepoch': epoch,
+    #              'net': model2.state_dict(),
+    #              'optim': optimizer.state_dict(),
+    #              'sched': scheduler.state_dict(),
+    #              'acc': acc
     #          }
-    #          torch.save(state, get_model_path(opt, state=f"correct_{opt.fs_method}_none"))
+    #          torch.save(state, get_model_path(opt, state=f'correct_{opt.fs_method}_none'))
     #          best_acc = acc
     #      scheduler.step()
-    #  print("[info] the finetune accuracy is {:.4f}%".format(best_acc))
+    #  print('[info] the finetune accuracy is {:.4f}%'.format(best_acc))
     #  model2 = model2.cpu()
 
     # state2: train classifier2 and patch module
@@ -421,12 +412,12 @@ def dual(opt, model, device):
     model3 = model3.to(device)
 
     for name, module in model3.named_modules():
-        #  if isinstance(module, nn.Linear) or "cru" in name:
-        if "cru" in name:
-            if "cru" in name and opt.crt_type == "replace":
-                conv_module_name = name.rstrip(".cru") + ".conv"
+        #  if isinstance(module, nn.Linear) or 'cru' in name:
+        if 'cru' in name:
+            if 'cru' in name and opt.crt_type == 'replace':
+                conv_module_name = name.rstrip('.cru') + '.conv'
                 conv_module = rgetattr(model3, conv_module_name)
-                indices = rgetattr(model3, name.rstrip(".cru")).indices
+                indices = rgetattr(model3, name.rstrip('.cru')).indices
                 state_dict = conv_module.state_dict()
                 for k in state_dict:
                     state_dict[k] = state_dict[k][indices]
@@ -446,37 +437,37 @@ def dual(opt, model, device):
 
     best_acc = 0
     for epoch in range(0, opt.crt_epoch):
-        print("Epoch: {}".format(epoch))
+        print('Epoch: {}'.format(epoch))
         train(model3, trainloader, optimizer, criterion, device)
         acc, *_ = test(model3, valloader, criterion, device)
         if acc > best_acc:
-            print("Saving...")
+            print('Saving...')
             state = {
-                "pepoch": epoch,
-                "net": model3.state_dict(),
-                "optim": optimizer.state_dict(),
-                "sched": scheduler.state_dict(),
-                "acc": acc
+                'pepoch': epoch,
+                'net': model3.state_dict(),
+                'optim': optimizer.state_dict(),
+                'sched': scheduler.state_dict(),
+                'acc': acc
             }
-            torch.save(state, get_model_path(opt, state=f"correct_{opt.fs_method}_patch"))
+            torch.save(state, get_model_path(opt, state=f'correct_{opt.fs_method}_patch'))
             best_acc = acc
         scheduler.step()
-    print("[info] the validated robust accuracy is {:.4f}%".format(best_acc))
+    print('[info] the validated robust accuracy is {:.4f}%'.format(best_acc))
 
     # Evaluate
-    ckp = torch.load(get_model_path(opt, state=f"correct_{opt.fs_method}_none"))
-    model2.load_state_dict(ckp["net"])
+    ckp = torch.load(get_model_path(opt, state=f'correct_{opt.fs_method}_none'))
+    model2.load_state_dict(ckp['net'])
     model2 = model2.to(device)
-    ckp = torch.load(get_model_path(opt, state=f"correct_{opt.fs_method}_patch"))
-    model3.load_state_dict(ckp["net"])
+    ckp = torch.load(get_model_path(opt, state=f'correct_{opt.fs_method}_patch'))
+    model3.load_state_dict(ckp['net'])
     _, (_, _, testloader) = load_dataset(opt, noise=(False, False))
     std_acc = dualeval(model2, model3, testloader, device)
     #  std_acc, *_ = test(model2, testloader, criterion, device)
-    print("[info] the normal accuracy is {:.4f}%".format(std_acc))
+    print('[info] the normal accuracy is {:.4f}%'.format(std_acc))
     _, (_, _, testloader) = load_dataset(opt, noise=(False, True))
     rob_acc = dualeval(model2, model3, testloader, device)
     #  rob_acc, *_ = test(model3, testloader, criterion, device)
-    print("[info] the robust accuracy is {:.4f}%".format(rob_acc))
+    print('[info] the robust accuracy is {:.4f}%'.format(rob_acc))
 
 
 def main():
@@ -488,6 +479,6 @@ def main():
     dispatcher(opt, model, device)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
 

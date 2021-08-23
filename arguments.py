@@ -1,4 +1,3 @@
-import sys
 import argparse
 
 
@@ -42,10 +41,10 @@ selparser.add_argument('-f', '--fs_method', type=str, required=True, choices=fsm
 selparser.add_argument('--mask_smallest_ratio', type=float, default=0.1)
 
 corparser = argparse.ArgumentParser(parents=[commparser])
-corparser.add_argument('-f', '--fs_method', type=str, required=True, choices=fsmethods)
+corparser.add_argument('-f', '--fs_method', type=str, choices=fsmethods)
 corparser.add_argument('-c', '--crt_method', type=str, required=True, choices=crtmethods)
-corparser.add_argument('--crt_type', required=any([v in sys.argv for v in ('patch', 'dual')]), choices=['crtunit', 'replace'])
+corparser.add_argument('--crt_type', type=str, choices=['crtunit', 'replace'])
 corparser.add_argument('--crt_epoch', type=int, default=20)
-corparser.add_argument('--susp_ratio', type=float, default=0.05)
+corparser.add_argument('--susp_ratio', type=float, default=0.25)
 corparser.add_argument('--susp_side', type=str, default='front', choices=['front', 'rear'])
 
