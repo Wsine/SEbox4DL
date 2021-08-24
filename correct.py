@@ -365,8 +365,8 @@ def dualeval(model1, model2, valloader, device):
 @dispatcher.register('dual')
 def dual(opt, model, device):
     # state1: finetune classifier1 only
-    _, (trainloader, _, testloader) = load_dataset(opt, noise=(False, False))
-    model2 = copy.deepcopy(model)
+    #  _, (trainloader, _, testloader) = load_dataset(opt, noise=(False, False))
+    #  model2 = copy.deepcopy(model)
     #  model2 = construct_model(opt, model2, patch=False)
     #  model2 = model2.to(device)
     #
