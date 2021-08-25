@@ -9,8 +9,23 @@ from sklearn.model_selection import train_test_split
 from utils import cache_object
 
 
+class RandomApply(object):
+    def __init__(self, tran, p=0.5):
+        self.tran = tran
+        self.prob = p
+        self.apply = False
+
+    def __call__(self, x):
+        p = random.random()
+        if p < self.prob:
+            self.apply = True
+            x = self.tran(x)
+        else:
+            self.apply = False
+        return x
+
+
 class RandomApplyOne(object):
-    """Randomly apply one of the tranformers to the input"""
     def __init__(self, trans):
         self.trans = trans
 
@@ -19,15 +34,31 @@ class RandomApplyOne(object):
         return t(x)
 
 
+class MaskNoiseLabel(object):
+    def __init__(self, label=-1):
+        self.noise_label = label
+
+    def __call__(self, y, apply):
+        return self.noise_label if apply is True else y
+
+
 class PostTransformDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset, transform=None):
+    def __init__(self, dataset, transform=None, target_transform=None):
         self.dataset = dataset
         self.transform = transform
+        self.target_transform = target_transform
 
     def __getitem__(self, idx):
         x, y = self.dataset[idx]
+        apply = False
         if self.transform is not None:
             x = self.transform(x)
+            if isinstance(self.transform, T.Compose):
+                for t in self.transform.transforms:
+                    if isinstance(t, RandomApply):
+                        apply = t.apply
+        if self.target_transform is not None:
+            y = self.target_transform(y, apply)
         return x, y
 
     def __len__(self):
@@ -37,7 +68,8 @@ class PostTransformDataset(torch.utils.data.Dataset):
 @cache_object(filename='dataset.pkl')
 def load_dataset(
         opt, split,
-        noise=False, noise_type=None, gblur_std=None):
+        noise=False, noise_type=None,
+        gblur_std=None, target_trsf=False):
 
     if opt.dataset == 'cifar10':
         cifar = torchvision.datasets.CIFAR10
@@ -54,6 +86,7 @@ def load_dataset(
         T.ToTensor(),
         T.Normalize(mean, std)
     ]
+    target_transform = None if target_trsf is False else MaskNoiseLabel()
 
     if split == 'test':
         base_dataset = cifar(root=opt.data_dir, train=False, download=True)
@@ -70,37 +103,49 @@ def load_dataset(
 
     if noise is True:
         if noise_type == 'random':
-            trsf = T.RandomApply([
-                RandomApplyOne([
-                    T.GaussianBlur(math.ceil(4*std)//2*2+1, sigma=std)
-                    for std in [0.5, 1., 1.5, 2., 2.5, 3.]
-                ])
-            ], p=0.5)
+            #  trsf = T.RandomApply([
+            #      RandomApplyOne([
+            #          T.GaussianBlur(math.ceil(4*std)//2*2+1, sigma=std)
+            #          for std in [0.5, 1., 1.5, 2., 2.5, 3.]
+            #      ])
+            #  ], p=0.5)
+            trsf = RandomApply(RandomApplyOne([
+                T.GaussianBlur(math.ceil(4*std)//2*2+1, sigma=std)
+                for std in [0.5, 1., 1.5, 2., 2.5, 3.]
+            ]), p=0.5)
             dataset = PostTransformDataset(
                 base_dataset,
-                transform=T.Compose([trsf] + common_transformers)
+                transform=T.Compose([trsf] + common_transformers),
+                target_transform=target_transform
             )
         elif noise_type == 'replace':
             assert gblur_std is not None, 'gblur_std should be a floating number'
             trsf = T.GaussianBlur(math.ceil(4*gblur_std)//2*2+1, sigma=gblur_std)
             dataset = PostTransformDataset(
                 base_dataset,
-                transform=T.Compose([trsf] + common_transformers)
+                transform=T.Compose([trsf] + common_transformers),
+                target_transform=target_transform
             )
         elif noise_type == 'expand' or noise_type == 'append':
             incset = [PostTransformDataset(
                 base_dataset,
-                transform=T.Compose(common_transformers)
+                transform=T.Compose(common_transformers),
+                target_transform=target_transform
             )] if noise_type == 'append' else []
             for std in [0.5, 1., 1.5, 2., 2.5, 3.]:
                 trsf = T.GaussianBlur(math.ceil(4*std)//2*2+1, sigma=std)
                 incset.append(PostTransformDataset(
                     base_dataset,
-                    transform=T.Compose([trsf] + common_transformers)
+                    transform=T.Compose([trsf] + common_transformers),
+                    target_transform=target_transform
                 ))
             dataset = torch.utils.data.ConcatDataset(incset)
         else:
             raise ValueError('Invalid noise_type parameter')
+
+        if target_trsf is True:
+            black_img = torch.zeros(dataset[0][0].size())
+            dataset.black_values = black_img.flatten(1).mean(1)
     else:
         dataset = PostTransformDataset(
             base_dataset,
