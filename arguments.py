@@ -10,6 +10,14 @@ class Args(object):
         }
         return num[dataset]
 
+    @staticmethod
+    def get_img_size(dataset):
+        size = {
+            'cifar10': 32,
+            'cifar100':32
+        }
+        return size[dataset]
+
 
 devices = ['cpu', 'cuda']
 datasets = ['cifar10', 'cifar100']
