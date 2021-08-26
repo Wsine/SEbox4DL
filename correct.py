@@ -109,6 +109,8 @@ def construct_model(opt, model, patch=True):
         #  while len(indices) % module.groups != 0:
         #      num_susp += 1
         #      indices = ranking[:num_susp]
+        if module.groups != 1:
+            continue
 
         if patch is False:
             correct_module = NoneCorrect(module, indices)
