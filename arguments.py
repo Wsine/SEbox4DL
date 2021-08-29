@@ -21,7 +21,7 @@ class Args(object):
 
 devices = ['cpu', 'cuda']
 datasets = ['cifar10', 'cifar100']
-models = ['resnet32', 'dcalexnet', 'mobilenetv2_x0_5']
+models = ['resnet32', 'dcalexnet', 'mobilenetv2_x0_5', 'vgg13_bn', 'shufflenetv2_x1_0']
 noises = ['gaussion', 'awgn']
 fsmethods = ['featswap', 'mactcalib', 'bpindiret', 'featwgting', 'wgtchange', 'lowrank', 'perfloss']
 crtmethods = ['patch', 'finetune', 'calibrate', 'dual']

@@ -253,6 +253,13 @@ def switch_on_the_fly(opt, model, device):
     std_acc, _ = test(model, testloader, criterion, device)
     print('[info] the normal accuracy is {:.4f}%'.format(std_acc))
 
+    partial_noisy_acc = []
+    for std in [0.5, 1., 1.5, 2., 2.5, 3.]:
+        _, testloader = load_dataset(opt, split='test', noise=True, noise_type='replace', gblur_std=std)
+        acc, _ = test(model, testloader, criterion, device)
+        print('[info] the robustness accuracy for std {:.1f} is {:.4f}%'.format(std, acc))
+        partial_noisy_acc.append(acc)
+
     _, testloader = load_dataset(opt, split='test', noise=True, noise_type='append')
     noisy_acc, _ = test(model, testloader, criterion, device)
     print('[info] the robustness accuracy is {:.4f}%'.format(noisy_acc))
@@ -261,7 +268,8 @@ def switch_on_the_fly(opt, model, device):
     state = {
         'net': model.state_dict(),
         'std_acc': std_acc,
-        'noisy_acc': noisy_acc
+        'noisy_acc': noisy_acc,
+        'partial_noisy_acc': partial_noisy_acc
     }
     torch.save(state, get_model_path(opt, state=f'switch_{opt.fs_method}_g{opt.gpu}'))
 
