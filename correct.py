@@ -1,6 +1,7 @@
 import os
 import json
 import copy
+import random
 
 import torch
 import torch.nn as nn
@@ -11,7 +12,7 @@ from sklearn.metrics import confusion_matrix
 
 from model import load_model
 from dataset import load_dataset
-from arguments import corparser as parser
+from arguments import advparser as parser
 from train import train, test
 from utils import *
 
@@ -98,14 +99,22 @@ class NoneCorrect(nn.Module):
 def construct_model(opt, model, patch=True):
     sus_filters = json.load(open(os.path.join(
         opt.output_dir, opt.dataset, opt.model, f'susp_filters_{opt.fs_method}.json'
-    )))
-    for name, info in sus_filters.items():
-        layer_name = name.rstrip('.weight')
+    ))) if opt.susp_side in ('front', 'rear') else None
+
+    conv_names = [n for n, m in model.named_modules() if isinstance(m, nn.Conv2d)]
+    for layer_name in conv_names:
         module = rgetattr(model, layer_name)
 
-        ranking = info['indices']
-        num_susp = int(len(ranking) * opt.susp_ratio)
-        indices = ranking[:num_susp] if opt.susp_side == 'front' else ranking[-num_susp:]
+        num_susp = int(module.out_channels * opt.susp_ratio)
+        if opt.susp_side == 'front':
+            indices = sus_filters[layer_name]['indices'][:num_susp]
+        elif opt.susp_side == 'rear':
+            indices = sus_filters[layer_name]['indices'][-num_susp:]
+        elif opt.susp_side == 'random':
+            indices = random.sample(range(module.out_channels), num_susp)
+        else:
+            raise ValueError('Invalid suspicious side')
+
         #  while len(indices) % module.groups != 0:
         #      num_susp += 1
         #      indices = ranking[:num_susp]
@@ -122,6 +131,16 @@ def construct_model(opt, model, patch=True):
             raise ValueError('Invalid correct type')
         rsetattr(model, layer_name, correct_module)
     return model
+
+
+def extract_indices(model):
+    info = {}
+    for n, m in model.named_modules():
+        if isinstance(m, ConcatCorrect) \
+                or isinstance(m, ReplaceCorrect) \
+                or isinstance(m, NoneCorrect):
+            info[n] = m.indices
+    return info
 
 
 @torch.no_grad()
@@ -195,6 +214,11 @@ def patch(opt, model, device):
         scheduler.load_state_dict(ckp['sched'])
         start_epoch = ckp['cepoch']
         best_acc = ckp['acc']
+        for n, m in model.named_modules():
+            if isinstance(m, ConcatCorrect) \
+                    or isinstance(m, ReplaceCorrect) \
+                    or isinstance(m, NoneCorrect):
+                m.indices = ckp['indices'][n]
     else:
         best_acc, *_ = test(model, valloader, criterion, device, desc='Baseline')
 
@@ -209,7 +233,8 @@ def patch(opt, model, device):
                 'net': model.state_dict(),
                 'optim': optimizer.state_dict(),
                 'sched': scheduler.state_dict(),
-                'acc': acc
+                'acc': acc,
+                'indices': extract_indices(model)
             }
             torch.save(state, get_model_path(opt, state=f'patch_{opt.fs_method}_g{opt.gpu}'))
             best_acc = acc

@@ -23,7 +23,7 @@ devices = ['cpu', 'cuda']
 datasets = ['cifar10', 'cifar100']
 models = ['resnet32', 'dcalexnet', 'mobilenetv2_x0_5', 'vgg13_bn', 'shufflenetv2_x1_0']
 noises = ['gaussion', 'awgn']
-fsmethods = ['featswap', 'mactcalib', 'bpindiret', 'featwgting', 'wgtchange', 'lowrank', 'perfloss']
+fsmethods = ['featswap', 'mactcalib', 'bpindiret', 'featwgting', 'wgtchange', 'lowrank', 'perfloss', 'ratioestim']
 crtmethods = ['patch', 'finetune', 'calibrate', 'dual']
 
 
@@ -44,15 +44,12 @@ optim_group.add_argument('--momentum', type=float, default=0.9)
 optim_group.add_argument('--weight_decay', type=float, default=5e-4)
 optim_group.add_argument('-e', '--max_epoch', type=int, default=50)
 
-selparser = argparse.ArgumentParser(parents=[commparser])
-selparser.add_argument('-f', '--fs_method', type=str, required=True, choices=fsmethods)
-selparser.add_argument('--mask_smallest_ratio', type=float, default=0.1)
-
-corparser = argparse.ArgumentParser(parents=[commparser])
-corparser.add_argument('-f', '--fs_method', type=str, choices=fsmethods)
-corparser.add_argument('-c', '--crt_method', type=str, required=True, choices=crtmethods)
-corparser.add_argument('--crt_type', type=str, choices=['crtunit', 'replace'])
-corparser.add_argument('--crt_epoch', type=int, default=20)
-corparser.add_argument('--susp_ratio', type=float, default=0.25)
-corparser.add_argument('--susp_side', type=str, default='front', choices=['front', 'rear'])
+advparser = argparse.ArgumentParser(parents=[commparser])
+advparser.add_argument('-f', '--fs_method', type=str, required=True, choices=fsmethods)
+advparser.add_argument('--mask_smallest_ratio', type=float, default=0.1)
+advparser.add_argument('-c', '--crt_method', type=str, required=True, choices=crtmethods)
+advparser.add_argument('--crt_type', type=str, choices=['crtunit', 'replace'])
+advparser.add_argument('--crt_epoch', type=int, default=20)
+advparser.add_argument('--susp_ratio', type=float, default=0.25)
+advparser.add_argument('--susp_side', type=str, default='front', choices=['front', 'rear', 'random'])
 

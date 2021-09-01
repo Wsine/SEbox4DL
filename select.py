@@ -6,12 +6,22 @@ from tqdm import tqdm
 
 from model import load_checkpoint, load_model
 from dataset import load_dataset
-from arguments import selparser as parser, Args
+from arguments import advparser as parser, Args
+from correct import patch
 from train import train, test
 from utils import *
 
 
 dispatcher = AttrDispatcher('fs_method')
+
+
+@dispatcher.register('ratioestim')
+def blame_ratio_eval(opt, model, _, device):
+    for r in range(9):
+        opt.susp_ratio = 0.15 + 0.1 * r  # from [0.15, 0.95, 0.1]
+        model2 = copy.deepcopy(model)
+        opt.fs_method = f'ratioestim_r{str(int(opt.susp_ratio*100))}'
+        patch(opt, model2, device)
 
 
 def overall_improve(opt, model, ckp, dataloaders, device):
@@ -391,7 +401,9 @@ def main():
     ckp = load_checkpoint(opt) if opt.fs_method == 'bpindiret' else None
 
     result = dispatcher(opt, model, ckp, device)
-    if opt.fs_method == 'featwgting':
+    if 'ratioestim' in opt.fs_method:
+        return
+    elif opt.fs_method == 'featwgting':
         result_name = 'feature_error_probability.pkl'
     else:
         result_name = 'susp_filters.json'
