@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you conduct research with this technique, please cite it as below."
+authors:
+- family-names: "Wei"
+  given-names: "Zhengyuan"
+  orcid: "https://orcid.org/0000-0001-5966-1338"
+title: "Implementation of DeepPatch"
+version: 1.0.0
+doi: 10.5281/zenodo.5401230
+date-released: 2021-09-03
+url: "https://github.com/Wsine/deeppatch"
