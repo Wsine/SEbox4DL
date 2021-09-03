@@ -35,11 +35,16 @@ class RandomApplyOne(object):
 
 
 class MaskNoiseLabel(object):
-    def __init__(self, label=-1):
-        self.noise_label = label
+    def __init__(self, persistent=None):
+        self.persistent = persistent
 
-    def __call__(self, y, apply):
-        return self.noise_label if apply is True else y
+    def set_persistent(self, p):
+        self.persistent = p
+
+    def __call__(self, apply):
+        if self.persistent is not None:
+            return self.persistent
+        return 1 if apply is True else 0
 
 
 class PostTransformDataset(torch.utils.data.Dataset):
@@ -58,7 +63,7 @@ class PostTransformDataset(torch.utils.data.Dataset):
                     if isinstance(t, RandomApply):
                         apply = t.apply
         if self.target_transform is not None:
-            y = self.target_transform(y, apply)
+            y = self.target_transform(apply)
         return x, y
 
     def __len__(self):
@@ -121,17 +126,23 @@ def load_dataset(
         elif noise_type == 'replace':
             assert gblur_std is not None, 'gblur_std should be a floating number'
             trsf = T.GaussianBlur(math.ceil(4*gblur_std)//2*2+1, sigma=gblur_std)
+            if target_transform is not None:
+                target_transform.set_persistent(1)
             dataset = PostTransformDataset(
                 base_dataset,
                 transform=T.Compose([trsf] + common_transformers),
                 target_transform=target_transform
             )
         elif noise_type == 'expand' or noise_type == 'append':
+            if target_transform is not None:
+                target_transform.set_persistent(0)
             incset = [PostTransformDataset(
                 base_dataset,
                 transform=T.Compose(common_transformers),
                 target_transform=target_transform
             )] if noise_type == 'append' else []
+            if target_transform is not None:
+                target_transform.set_persistent(1)
             for std in [0.5, 1., 1.5, 2., 2.5, 3.]:
                 trsf = T.GaussianBlur(math.ceil(4*std)//2*2+1, sigma=std)
                 incset.append(PostTransformDataset(

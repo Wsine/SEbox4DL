@@ -28,6 +28,8 @@ def train(model, trainloader, optimizer, criterion, device, desc='Train'):
             acc = 100. * correct / total
             tepoch.set_postfix(loss=avg_loss, acc=acc)
 
+    return acc, avg_loss
+
 
 @torch.no_grad()
 def test(
