@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from model import load_model
 from dataset import load_dataset
-from arguments import Args, corparser as parser
+from arguments import Args, advparser as parser
 from train import train, test
 from correct import construct_model, ReplaceCorrect
 from utils import *
