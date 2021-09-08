@@ -4,14 +4,15 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-# torch = {file = "https://download.pytorch.org/whl/cu111/torch-1.8.1%2Bcu111-cp36-cp36m-linux_x86_64.whl"}
-# torchvision = {file = "https://download.pytorch.org/whl/cu111/torchvision-0.9.1%2Bcu111-cp36-cp36m-linux_x86_64.whl"}
+torch = {version = "==1.8.1", index = "https://download.pytorch.org/whl/cu111/"}
+torchvision = {version = "==0.9.1", index = "https://download.pytorch.org/whl/cu111/"}
 tqdm = "*"
 sklearn = "*"
 pandas = "*"
+pillow = ">=8.3.2"
 
 [dev-packages]
-notebook = "*"
+notebook = ">=6.4.1"
 jupyter-http-over-ws = "*"
 jedi = "==0.17.2"
 ipywidgets = "*"
