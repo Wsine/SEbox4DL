@@ -1,10 +1,14 @@
+<img align="right" height="200" src="https://s1.52poke.wiki/wiki/thumb/f/f8/083Farfetch%27d.png/300px-083Farfetch%27d.png">
+
 # DeepPatch
+
+Project Code: Farfetch'd
+
+For more details, please refer to the following publication.
 
 ## Publication
 
 Under review
-
-
 
 ## Installation
 
@@ -15,8 +19,6 @@ The dependencies are very convenient to install by one command. The versions are
 ```bash
 pipenv sync
 ```
-
-
 
 ## How to run
 
@@ -32,4 +34,3 @@ assess    python src/select.py  -m resnet32 -d cifar10 -f perfloss
 correct   python src/correct.py -m resnet32 -d cifar10 -f perfloss -c patch --crt_type replace
 evaluate  python src/switch.py  -m resent32 -d cifar10 -f perfloss -c patch --crt_type replace
 ```
-
