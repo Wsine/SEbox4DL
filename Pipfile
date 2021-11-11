@@ -22,4 +22,8 @@ matplotlib = "*"
 python_version = "3.6"
 
 [scripts]
-notebook = "jupyter notebook --config=.notebook_config.py"
+pretrain = "python src/eval.py    -m resnet32 -d cifar10"
+assess   = "python src/select.py  -m resnet32 -d cifar10 -f perfloss"
+correct  = "python src/correct.py -m resnet32 -d cifar10 -f perfloss -c patch --crt_type replace"
+evaluate = "python src/switch.py  -m resent32 -d cifar10 -f perfloss -c patch --crt_type replace"
+
