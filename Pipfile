@@ -10,20 +10,13 @@ tqdm = "*"
 sklearn = "*"
 pandas = "*"
 pillow = ">=8.3.2"
+matplotlib = "*"
+streamlit = "*"
 
 [dev-packages]
-notebook = ">=6.4.1"
-jupyter-http-over-ws = "*"
-jedi = "==0.17.2"
-ipywidgets = "*"
-matplotlib = "*"
 
 [requires]
-python_version = "3.6"
+python_version = "3.8"
 
 [scripts]
-pretrain = "python src/eval.py    -m resnet32 -d cifar10"
-assess   = "python src/select.py  -m resnet32 -d cifar10 -f perfloss"
-correct  = "python src/correct.py -m resnet32 -d cifar10 -f perfloss -c patch --crt_type replace"
-evaluate = "python src/switch.py  -m resent32 -d cifar10 -f perfloss -c patch --crt_type replace"
-
+streamlit = "streamlit run app/main.py --server.headless true"
