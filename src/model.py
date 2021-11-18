@@ -1,15 +1,11 @@
 import torch
 
-from utils import get_model_path
+from src.utils import get_model_path
 
 
-def load_model(opt, pretrained=False):
-    if 'cifar' in opt.dataset:
-        model = torch.hub.load(
-            'chenyaofo/pytorch-cifar-models',
-            f'{opt.dataset}_{opt.model}',
-            pretrained=pretrained
-        )
+def load_model(opt):
+    if opt.model_source_type == '3rdparty':
+        model = torch.hub.load(opt.model_source, opt.model, pretrained=opt.pretrained)
         return model
     else:
         raise ValueError('Invalid dataset name')

@@ -2,18 +2,45 @@ import os
 from importlib import import_module
 
 import streamlit as st
+from stqdm import stqdm
+
+from app.context import create_context
 
 
-ICON_URL = "https://emojipedia-us.s3.dualstack.us-west-1.amazonaws.com/thumbs/120/apple/285/scientist_1f9d1-200d-1f52c.png"
-st.set_page_config(page_title='Ponyta', page_icon=ICON_URL)  # type: ignore
+def set_page_config(ctx):
+    st.set_page_config(page_title='Ponyta', page_icon=':horse:')  # type: ignore
 
-tasks = [f.name for f in os.scandir('tasks') if f.is_dir()]
 
-with st.sidebar:
-    st.info('🎈 **NEW:** Select your task first before config the task')
-    st.write('## Task')
-    input_task = st.sidebar.selectbox('The task to perform with this toolbox?', tasks)
+def set_task_config(ctx):
+    tasks = ['none'] \
+          + [f.name.rstrip('.py') for f in os.scandir(os.path.join('app', 'tasks')) \
+             if not f.name.startswith('_')]
 
-task = import_module(f'tasks.{input_task}.main')
-task.run()  # type: ignore
+    with st.sidebar:
+        st.write('## Task')
+        ctx.task = st.sidebar.selectbox('which task to perform with this toolbox?', tasks)
+        #  ctx.task = st.sidebar.selectbox('which task to perform with this toolbox?', tasks, index=4)
+
+    if ctx.task != 'none':
+        task = import_module(f'app.tasks.{ctx.task}')
+        st.sidebar.write('## Task Config')
+        ctx.opt = task.load_sidebar(ctx)  # type: ignore
+
+        _, _, col3 = st.sidebar.columns(3)
+        col3.button('RUN', on_click=task.run, args=(ctx,))  # type: ignore
+
+
+def set_ctx_helper(ctx):
+    ctx.tqdm = stqdm
+
+
+def main():
+    with create_context('Ponyta') as ctx:
+        set_page_config(ctx)
+        set_task_config(ctx)
+        set_ctx_helper(ctx)
+
+
+if __name__ == '__main__':
+    main()
 

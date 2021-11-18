@@ -1,6 +1,5 @@
-data
 output
 .vim
-test.py
+.venv
 cache
-__pycache__
+**/__pycache__

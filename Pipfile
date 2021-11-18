@@ -12,6 +12,7 @@ pandas = "*"
 pillow = ">=8.3.2"
 matplotlib = "*"
 streamlit = "*"
+stqdm = "*"
 
 [dev-packages]
 

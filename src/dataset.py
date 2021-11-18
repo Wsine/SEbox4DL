@@ -1,12 +1,18 @@
 import math
 import random
+from datetime import date
 
 import torch
+import torch.utils.data
 import torchvision
 import torchvision.transforms as T
 from sklearn.model_selection import train_test_split
 
-from utils import cache_object
+
+DATASET_PROBS = {
+    'CIFAR10':  {'mean': (0.4914, 0.4822, 0.4465), 'std': (0.2023, 0.1994, 0.2010)},
+    'CIFAR100': {'mean': (0.5071, 0.4867, 0.4408), 'std': (0.2675, 0.2565, 0.2761)}
+}
 
 
 class RandomApply(object):
@@ -70,22 +76,15 @@ class PostTransformDataset(torch.utils.data.Dataset):
         return len(self.dataset)
 
 
-@cache_object(filename='dataset.pkl')
 def load_dataset(
         opt, split,
         noise=False, noise_type=None,
         gblur_std=None, target_trsf=False):
 
-    if opt.dataset == 'cifar10':
-        cifar = torchvision.datasets.CIFAR10
-        mean = (0.4914, 0.4822, 0.4465)
-        std = (0.2023, 0.1994, 0.2010)
-    elif opt.dataset == 'cifar100':
-        cifar = torchvision.datasets.CIFAR100
-        mean = (0.5071, 0.4867, 0.4408)
-        std = (0.2675, 0.2565, 0.2761)
-    else:
-        raise ValueError('Invalid dataset value')
+    dataset_entry = eval(f'torchvision.datasets.{opt.dataset}')
+    mean = DATASET_PROBS[opt.dataset]['mean']
+    std = DATASET_PROBS[opt.dataset]['std']
+    random_state = date.today().year
 
     common_transformers = [
         T.ToTensor(),
@@ -94,15 +93,15 @@ def load_dataset(
     target_transform = None if target_trsf is False else MaskNoiseLabel()
 
     if split == 'test':
-        base_dataset = cifar(root=opt.data_dir, train=False, download=True)
+        base_dataset = dataset_entry(root='data', train=False, download=True)
     elif split == 'val':
-        base_largeset = cifar(root=opt.data_dir, train=True, download=True)
+        base_largeset = dataset_entry(root='data', train=True, download=True)
         _, base_dataset = train_test_split(
-            base_largeset, test_size=1./50, random_state=2021, stratify=base_largeset.targets)
+            base_largeset, test_size=1./50, random_state=random_state, stratify=base_largeset.targets)
     elif split == 'train':
-        base_largeset = cifar(root=opt.data_dir, train=True, download=True)
+        base_largeset = dataset_entry(root='data', train=True, download=True)
         base_dataset, _ = train_test_split(
-            base_largeset, test_size=1./50, random_state=2021, stratify=base_largeset.targets)
+            base_largeset, test_size=1./50, random_state=random_state, stratify=base_largeset.targets)
     else:
         raise ValueError('Invalid parameter of split')
 
