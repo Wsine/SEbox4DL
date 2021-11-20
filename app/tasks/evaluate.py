@@ -14,6 +14,8 @@ def load_sidebar(ctx):
     opt = Namespace()
     sidebar.load_datasets(opt)
     sidebar.load_models(opt)
+    sidebar.load_evaluate_configs(opt)
+    print("eval: ", opt)
     return opt
 
 

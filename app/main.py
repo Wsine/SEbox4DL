@@ -3,9 +3,9 @@ from importlib import import_module
 
 import streamlit as st
 from stqdm import stqdm
-
 from app.context import create_context
-
+# export PYTHONPATH="$(pwd)"
+# todo: torun: streamlit run app/main.py --server.headless true
 
 def set_page_config(ctx):
     st.set_page_config(page_title='Ponyta', page_icon=':horse:')  # type: ignore

@@ -42,7 +42,7 @@ def load_models(opt):
     elif opt.model_source_type == '3rdparty':
         opt.model_source = st.text_input(
             'where is the model source?',
-            #  value="chenyaofo/pytorch-cifar-models",
+             # value="chenyaofo/pytorch-cifar-models",
             placeholder='example: chenyaofo/pytorch-cifar-models',
             help='refer to: https://pytorch.org/hub/'
         )
@@ -56,6 +56,27 @@ def load_models(opt):
     else:
         raise ValueError('Invalid input source')
 
+@sidebar_ctx
+def load_evaluate_configs(opt):
     opt.pretrained = st.checkbox('use (pre)trained weights?', True)
+
+@sidebar_ctx
+def load_train_configs(opt):
+    opt.max_epoch = st.number_input('What is the maximum training epoch', min_value=1, value=5)
+    opt.optimizer = st.radio(
+        'which optimizer to be used?',
+        ['SGD', 'Adam', 'Adagrad']
+    )
+
+    opt.loss = st.radio(
+        'which loss function to be used?',
+        ['Cross-entropy', 'Mean squared error']
+    )
+    opt.pretrained = False
+    opt.output_dir = "./output/"
+
+
+
+
 
 
