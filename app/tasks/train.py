@@ -13,7 +13,7 @@ def load_sidebar(ctx):
     opt = Namespace()
     sidebar.load_datasets(opt)
     sidebar.load_models(opt)
-    sidebar.load_train_configs(opt)
+    sidebar.load_train_configs(opt, False)
     print("train: ", opt)
     return opt
 

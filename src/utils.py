@@ -5,7 +5,7 @@ import functools
 import hashlib
 
 
-def get_model_path(opt, state="best"):
+def get_model_path(opt, state):
     path = os.path.join(
         opt.output_dir, opt.dataset, opt.model, f"model_{state}.pth")
     return path
