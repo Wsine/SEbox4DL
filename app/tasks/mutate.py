@@ -38,32 +38,20 @@ def run(ctx):
         with st_stdout('code'), st_stderr('code'):
             _, testloader = load_dataset(ctx.opt, split='test')
     st.success(':balloon: dataset loaded.')
-    buggy_filters, buggy_filters_layer, mutated_models = absent_mutate(ctx=ctx, model=model, data_loader=testloader)
+    buggy_filters, buggy_filters_layer = absent_mutate(ctx=ctx, model=model, data_loader=testloader)
     sorted_acc_diff, sorted_indices = torch.sort(torch.tensor(buggy_filters['acc_diff']), descending=True)
 
     st.write('## Results')
     st.write('### 1. Buggy filters test accuracy difference')
-    acc_diff = sorted_acc_diff.tolist()
+    acc_diff = np.array(sorted_acc_diff.tolist())
     plt.title('Test accuracy difference with filter absent')
     plt.plot(range(len(acc_diff)), acc_diff)
     plt.xlabel('Filter Index')
     plt.ylabel('Test Accuracy Difference')
     st.pyplot()
 
-    st.write('### 2. Download mutated models')
-    try:
-        model_index_list = random.sample(range(0, len(mutated_models)), 2)
-        for model_index in model_index_list:
-            torch.save(mutated_models[model_index], "mutated_model_randomly_" + str(model_index) + ".pth")
-            st.download_button(label="Download mutated model_" + str(model_index),
-                               data="mutated_model_randomly_" + str(model_index) + ".pth",
-                               file_name="mutated_model_randomly_" + str(model_index) + ".pth")
-    except Exception as excep:
-        st.write('No mutated models can be downloaded! ' + str(excep))
-
-    st.write('### 3. Buggy filters list')
+    st.write('### 2. Buggy filters list')
     for buggy_filters_one_layer in buggy_filters_layer:
-        if len(buggy_filters_one_layer['buggy_filter_index_layer']) > 0:
-            st.write("Layer: " + buggy_filters_one_layer['layer'].strip('.weight') + " buggy filter index: " + str(buggy_filters_one_layer['buggy_filter_index_layer']))
+        st.write("Layer: " + buggy_filters_one_layer['layer'] + " buggy filter index: " + str(buggy_filters_one_layer['buggy_filter_index_layer']))
 
     st.balloons()

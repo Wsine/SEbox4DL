@@ -24,15 +24,11 @@ def absent_mutate(ctx, model, data_loader):
 
     state_dict_original = copy.deepcopy(model.state_dict())
     layer_list = list(state_dict_original)
-
-    mutated_models = []
-
     for layer_index, layer in enumerate(state_dict_original):
         layer_size = state_dict_original[layer].size()
         acc_diff_layer = []
         buggy_filter_index_layer = []
 
-        keep_model_layer = False
         # Explore and find step: finding the buggy filters
         if len(layer_size) == 4:
             # print(f"----Exploration: Current Layer is {layer}, Size is {state_dict_original[layer].size()}----")
@@ -52,13 +48,8 @@ def absent_mutate(ctx, model, data_loader):
                 if acc_diff > 0:
                     buggy_filter_index_layer.append(filter_index)
 
-                    # one layer only keep one mutated model
-                    if keep_model_layer is False:
-                        mutated_models.append(copy.deepcopy(model.state_dict()))
-                        keep_model_layer = True
-
             # keep the buggy filter info
             buggy_filters['acc_diff'].extend(acc_diff_layer)
             buggy_filters['buggy_filter_index'].extend(buggy_filter_index_layer)
             buggy_filters_by_layer.append({'layer': layer, 'acc_diff_layer': acc_diff_layer, 'buggy_filter_index_layer': buggy_filter_index_layer})
-    return buggy_filters, buggy_filters_by_layer, mutated_models
+    return buggy_filters, buggy_filters_by_layer
