@@ -3,3 +3,5 @@ output
 .venv
 cache
 **/__pycache__
+test.py
+data/

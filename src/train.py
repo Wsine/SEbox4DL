@@ -1,16 +1,16 @@
 import torch
 from tqdm import tqdm
 
-from dataset import load_dataset
-from model import load_model
-from arguments import commparser as parser
-from utils import *
+from src.dataset import load_dataset
+from src.model import load_model
+from src.arguments import commparser as parser
+from src.utils import *
 
 
-def train(model, trainloader, optimizer, criterion, device, desc='Train'):
+def train(ctx, model, trainloader, optimizer, criterion, device, desc):
     model.train()
     train_loss, correct, total = 0, 0, 0
-    with tqdm(trainloader, desc=desc) as tepoch:
+    with ctx.tqdm(trainloader, desc=desc) as tepoch:
         for batch_idx, (inputs, targets) in enumerate(tepoch):
             inputs, targets = inputs.to(device), targets.to(device)
             optimizer.zero_grad()
@@ -30,15 +30,41 @@ def train(model, trainloader, optimizer, criterion, device, desc='Train'):
 
     return acc, avg_loss
 
+def train_model(ctx, model, trainloader, validloader, optimizer, criterion, scheduler):
+    # set as default
+    ctx.opt.parallel = False
+    if ctx.device.type == 'cuda':
+        if torch.cuda.device_count() > 1 and ctx.opt.parallel is True:
+            model = torch.nn.DataParallel(model)
+    guard_folder(ctx.opt)
+    start_epoch = -1
+    best_acc = 0
+    for epoch in ctx.tqdm(range(start_epoch + 1, ctx.opt.max_epoch), desc="Total Progress"):
+        sub_desc = 'Epoch {}'.format(epoch)
+        train(ctx, model, trainloader, optimizer, criterion, ctx.device, sub_desc)
+        acc, _ = test(ctx, model, validloader, criterion, ctx.device)
+        if acc > best_acc:
+            # print('Saving model')
+            state = {
+                'epoch': epoch,
+                'net': model.state_dict() if not ctx.opt.parallel else model.module.state_dict(),
+                'optim': optimizer.state_dict(),
+                'sched': scheduler.state_dict(),
+                'acc': acc
+            }
+            torch.save(state, get_model_path(ctx.opt, state='pretrained'))
+            best_acc = acc
+        scheduler.step()
 
 @torch.no_grad()
 def test(
+        ctx,
         model, valloader, criterion, device,
         desc='Evaluate', return_label=False, tqdm_leave=True):
     model.eval()
     test_loss, correct, total = 0, 0, 0
     pred_labels, trg_labels = [], []
-    with tqdm(valloader, desc=desc, leave=tqdm_leave) as tepoch:
+    with ctx.tqdm(valloader, desc=desc, leave=tqdm_leave) as tepoch:
         for batch_idx, (inputs, targets) in enumerate(tepoch):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = model(inputs)
