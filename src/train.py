@@ -52,7 +52,11 @@ def train_model(ctx, model, trainloader, validloader, optimizer, criterion, sche
                 'sched': scheduler.state_dict(),
                 'acc': acc
             }
-            torch.save(state, get_model_path(ctx.opt, state='pretrained'))
+            if ctx.opt.pretrained:
+                state = 'pretrained'
+            else:
+                state = 'train'
+            torch.save(state, get_model_path(ctx.opt, state=state))
             best_acc = acc
         scheduler.step()
 

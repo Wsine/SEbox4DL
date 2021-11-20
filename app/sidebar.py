@@ -61,7 +61,7 @@ def load_evaluate_configs(opt):
     opt.pretrained = st.checkbox('use (pre)trained weights?', True)
 
 @sidebar_ctx
-def load_train_configs(opt):
+def load_train_configs(opt, isfinetune=False):
     opt.max_epoch = st.number_input('What is the maximum training epoch', min_value=1, value=5)
     opt.optimizer = st.radio(
         'which optimizer to be used?',
@@ -72,7 +72,10 @@ def load_train_configs(opt):
         'which loss function to be used?',
         ['Cross-entropy', 'Mean squared error']
     )
-    opt.pretrained = False
+    if isfinetune:
+        opt.pretrained = True
+    else:
+        opt.pretrained = False
     opt.output_dir = "./output/"
 
 
