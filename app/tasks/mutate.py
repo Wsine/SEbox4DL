@@ -50,16 +50,20 @@ def run(ctx):
     plt.ylabel('Test Accuracy Difference')
     st.pyplot()
 
-    st.write('### 2. Download mutated models (randomly selected)')
-    model_index_list = random.sample(range(0, len(mutated_models)), 2)
-    for model_index in model_index_list:
-        torch.save(mutated_models[model_index], "mutated_model_randomly_" + str(model_index) + ".pth")
-        st.download_button(label="Download mutated model" + str(model_index),
-                           data="mutated_model_randomly_" + str(model_index) + ".pth",
-                           file_name="mutated_model_randomly_" + str(model_index) + ".pth")
+    st.write('### 2. Download mutated models')
+    try:
+        model_index_list = random.sample(range(0, len(mutated_models)), 2)
+        for model_index in model_index_list:
+            torch.save(mutated_models[model_index], "mutated_model_randomly_" + str(model_index) + ".pth")
+            st.download_button(label="Download mutated model_" + str(model_index),
+                               data="mutated_model_randomly_" + str(model_index) + ".pth",
+                               file_name="mutated_model_randomly_" + str(model_index) + ".pth")
+    except Exception as excep:
+        st.write('No mutated models can be downloaded! ' + str(excep))
 
     st.write('### 3. Buggy filters list')
     for buggy_filters_one_layer in buggy_filters_layer:
-        st.write("Layer: " + buggy_filters_one_layer['layer'] + " buggy filter index: " + str(buggy_filters_one_layer['buggy_filter_index_layer']))
+        if len(buggy_filters_one_layer['buggy_filter_index_layer']) > 0:
+            st.write("Layer: " + buggy_filters_one_layer['layer'].strip('.weight') + " buggy filter index: " + str(buggy_filters_one_layer['buggy_filter_index_layer']))
 
     st.balloons()
