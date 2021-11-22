@@ -7,9 +7,7 @@ from app.context import st_stdout, st_stderr
 from src.model import load_model
 from src.dataset import load_dataset
 from src.mutate import absent_mutate
-import numpy as np
 import matplotlib.pyplot as plt
-
 st.set_option('deprecation.showPyplotGlobalUse', False)
 
 
@@ -17,6 +15,7 @@ def load_sidebar(ctx):
     opt = Namespace()
     sidebar.load_datasets(opt)
     sidebar.load_models(opt)
+    sidebar.load_evaluate_configs(opt)
     return opt
 
 
@@ -55,7 +54,7 @@ def run(ctx):
         model_index_list = random.sample(range(0, len(mutated_models)), 2)
         for model_index in model_index_list:
             torch.save(mutated_models[model_index], "mutated_model_randomly_" + str(model_index) + ".pth")
-            st.download_button(label="Download mutated model_" + str(model_index),
+            st.download_button(label="Download mutated model " + str(model_index),
                                data="mutated_model_randomly_" + str(model_index) + ".pth",
                                file_name="mutated_model_randomly_" + str(model_index) + ".pth")
     except Exception as excep:
