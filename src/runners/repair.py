@@ -1,19 +1,14 @@
-import os
-import json
 import random
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from model import load_model
-from dataset import load_dataset
-from arguments import advparser as parser
-from train import train, test
-from utils import *
+from src.runners.train import train, test
+from src.utils import *
 
 
-dispatcher = AttrDispatcher('crt_method')
+repair_dispatcher = AttrDispatcher('repair_runner')
 
 
 class CorrectionUnit(nn.Module):
@@ -80,71 +75,55 @@ class ReplaceCorrect(nn.Module):
         return out
 
 
-class NoneCorrect(nn.Module):
-    def __init__(self, conv_layer, indices):
-        super(NoneCorrect, self).__init__()
-        self.indices = indices
-        self.conv = conv_layer
-
-    def forward(self, x):
-        out = self.conv(x)
-        out[:, self.indices] = 0
-        return out
-
-
-def construct_model(opt, model, patch=True):
-    sus_filters = json.load(open(os.path.join(
-        opt.output_dir, opt.dataset, opt.model, f'susp_filters_{opt.fs_method}.json'
-    ))) if opt.susp_side in ('front', 'rear') else None
-
+@repair_dispatcher.register('deepcorrect')
+def deepcorrect_method(_, model, key_dict=None):
+    new_model = model
     conv_names = [n for n, m in model.named_modules() if isinstance(m, nn.Conv2d)]
+    new_key_dict = {}
     for layer_name in conv_names:
         module = rgetattr(model, layer_name)
-
-        num_susp = int(module.out_channels * opt.susp_ratio)
-        if opt.susp_side == 'front':
-            indices = sus_filters[layer_name]['indices'][:num_susp]
-        elif opt.susp_side == 'rear':
-            indices = sus_filters[layer_name]['indices'][-num_susp:]
-        elif opt.susp_side == 'random':
-            indices = random.sample(range(module.out_channels), num_susp)
-        else:
-            raise ValueError('Invalid suspicious side')
-
         if module.groups != 1:
             continue
 
-        if patch is False:
-            correct_module = NoneCorrect(module, indices)
-        elif opt.crt_type == 'crtunit':
-            correct_module = ConcatCorrect(module, indices)
-        elif opt.crt_type == 'replace':
-            correct_module = ReplaceCorrect(module, indices)
+        num_susp = int(module.out_channels * 0.75)
+        if key_dict is None:
+            indices = random.sample(range(module.out_channels), num_susp)
         else:
-            raise ValueError('Invalid correct type')
-        rsetattr(model, layer_name, correct_module)
-    return model
+            indices = key_dict[layer_name]
+        new_key_dict[layer_name] = indices
+
+        correct_module = ConcatCorrect(module, indices)
+        rsetattr(new_model, layer_name, correct_module)
+    return new_model, new_key_dict
 
 
-def extract_indices(model):
-    info = {}
-    for n, m in model.named_modules():
-        if isinstance(m, ConcatCorrect) \
-                or isinstance(m, ReplaceCorrect) \
-                or isinstance(m, NoneCorrect):
-            info[n] = m.indices
-    return info
+@repair_dispatcher.register('deeppatch')
+def deeppatch_method(_, model, key_dict=None):
+    new_model = model
+    conv_names = [n for n, m in model.named_modules() if isinstance(m, nn.Conv2d)]
+    new_key_dict = {}
+    for layer_name in conv_names:
+        module = rgetattr(model, layer_name)
+        if module.groups != 1:
+            continue
+
+        num_susp = int(module.out_channels * 0.25)
+        if key_dict is None:
+            indices = random.sample(range(module.out_channels), num_susp)
+        else:
+            indices = key_dict[layer_name]
+        new_key_dict[layer_name] = indices
+
+        correct_module = ReplaceCorrect(module, indices)
+        rsetattr(new_model, layer_name, correct_module)
+    return new_model, new_key_dict
 
 
-@dispatcher.register('patch')
-def patch(opt, model, device):
-    _, trainloader = load_dataset(opt, split='train', noise=True, noise_type='random')
-    _, valloader = load_dataset(opt, split='val', noise=True, noise_type='append')
+def repair_model(ctx, model, trainloader, valloader):
+    new_model, key_dict = repair_dispatcher(ctx.opt, model)
+    new_model = new_model.to(ctx.device)
 
-    model = construct_model(opt, model)
-    model = model.to(device)
-
-    for name, module in model.named_modules():
+    for name, module in new_model.named_modules():
         if 'cru' in name:
             for param in module.parameters():
                 param.requires_grad = True
@@ -152,92 +131,35 @@ def patch(opt, model, device):
             for param in module.parameters():
                 param.requires_grad = False
 
-    criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(
-        filter(lambda p: p.requires_grad, model.parameters()),
-        lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay
+    criterion = eval(f'torch.nn.{ctx.opt.criterion}()')
+    optimizer = eval(f'torch.optim.{ctx.opt.optimizer}')(
+        filter(lambda p: p.requires_grad, new_model.parameters()),
+        lr=ctx.opt.lr, momentum=ctx.opt.momentum, weight_decay=ctx.opt.weight_decay
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
-    start_epoch = -1
-    if opt.resume:
-        ckp = torch.load(get_model_path(opt, state=f'patch_{opt.fs_method}_g{opt.gpu}'))
-        model.load_state_dict(ckp['net'])
-        optimizer.load_state_dict(ckp['optim'])
-        scheduler.load_state_dict(ckp['sched'])
-        start_epoch = ckp['cepoch']
-        best_acc = ckp['acc']
-        for n, m in model.named_modules():
-            if isinstance(m, ConcatCorrect) \
-                    or isinstance(m, ReplaceCorrect) \
-                    or isinstance(m, NoneCorrect):
-                m.indices = ckp['indices'][n]
-    else:
-        best_acc, *_ = test(model, valloader, criterion, device, desc='Baseline')
-
-    for epoch in range(start_epoch + 1, opt.crt_epoch):
-        print('Epoch: {}'.format(epoch))
-        train(model, trainloader, optimizer, criterion, device)
-        acc, *_ = test(model, valloader, criterion, device)
+    best_acc, *_ = test(ctx, new_model, valloader, criterion, ctx.device)
+    for epoch in ctx.tqdm(range(0, ctx.opt.max_epoch), desc='Epochs'):
+        train(ctx, new_model, trainloader, optimizer, criterion, ctx.device)
+        acc, loss = test(ctx, new_model, valloader, criterion, ctx.device)
         if acc > best_acc:
-            print('Saving...')
             state = {
-                'cepoch': epoch,
-                'net': model.state_dict(),
+                'epoch': epoch,
+                'net': new_model.state_dict(),
+                'key_dict': key_dict,
                 'optim': optimizer.state_dict(),
                 'sched': scheduler.state_dict(),
                 'acc': acc,
-                'indices': extract_indices(model)
+                'loss': loss
             }
-            torch.save(state, get_model_path(opt, state=f'patch_{opt.fs_method}_g{opt.gpu}'))
+            torch.save(state, get_model_path(ctx, state='repair'))
             best_acc = acc
         scheduler.step()
-    print('[info] the best retrain accuracy is {:.4f}%'.format(best_acc))
 
+    best_model_path = get_model_path(ctx, state='repair')
+    ckpt = torch.load(best_model_path, map_location=torch.device('cpu'))
+    new_model.load_state_dict(ckpt['net'])
+    repair_model = new_model.to(ctx.device)
 
-@dispatcher.register('finetune')
-def finetune(opt, model, device):
-    _, trainloader = load_dataset(opt, split='train', noise=True, noise_type='random')
-    _, valloader = load_dataset(opt, split='val', noise=True, noise_type='append')
-
-    model = model.to(device)
-
-    criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(
-        model.parameters(),
-        lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
-
-    best_acc, *_ = test(model, valloader, criterion, device, desc='Baseline')
-    for epoch in range(0, opt.crt_epoch):
-        print('Epoch: {}'.format(epoch))
-        train(model, trainloader, optimizer, criterion, device)
-        acc, *_ = test(model, valloader, criterion, device)
-        if acc > best_acc:
-            print('Saving...')
-            state = {
-                'cepoch': epoch,
-                'net': model.state_dict(),
-                'optim': optimizer.state_dict(),
-                'sched': scheduler.state_dict(),
-                'acc': acc
-            }
-            torch.save(state, get_model_path(opt, state=f'finetune_g{opt.gpu}'))
-            best_acc = acc
-        scheduler.step()
-    print('[info] the best retrain accuracy is {:.4f}%'.format(best_acc))
-
-
-def main():
-    opt = parser.parse_args()
-    print(opt)
-
-    device = torch.device(f'cuda:{opt.gpu}' if opt.device == 'cuda' and torch.cuda.is_available() else 'cpu')
-    model = load_model(opt, pretrained=True)
-    dispatcher(opt, model, device)
-
-
-if __name__ == '__main__':
-    main()
+    return repair_model, best_model_path
 
