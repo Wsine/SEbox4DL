@@ -82,3 +82,11 @@ def load_repair_options(opt):
     repairers = repair_dispatcher.registry.keys()
     opt.repair_runner = st.radio('which method do you want to apply for repair?', repairers)
 
+
+@sidebar_ctx
+def load_fuzz_options(opt):
+    from src.runners.fuzz import fuzz_dispatcher
+    fuzzers = fuzz_dispatcher.registry.keys()
+    opt.fuzzer_runner = st.radio('which fuzzer do you want to apply?', fuzzers)
+    opt.timeout = st.slider('which long do you want to fuzz (in minutes)?', min_value=1, value=10)
+
