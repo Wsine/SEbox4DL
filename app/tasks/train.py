@@ -13,9 +13,8 @@ from src.runners.train import train_model
 def load_sidebar(_):
     opt = Namespace()
     sidebar.load_datasets(opt)
-    sidebar.load_models(opt)
+    sidebar.load_models(opt, load_pretrained=False)
     sidebar.load_train_options(opt)
-    opt.pretrained = False
     return opt
 
 
@@ -36,8 +35,8 @@ def run(ctx):
 
     with st.spinner(text='Loading dataset...'), st.expander('See loading process'):
         with st_stdout('code'), st_stderr('code'):
-            _, trainloader = load_dataset(ctx.opt, split='train')
-            _, valloader = load_dataset(ctx.opt, split='val')
+            _, trainloader = load_dataset(ctx, split='train')
+            _, valloader = load_dataset(ctx, split='val')
     st.success(':balloon: dataset loaded.')
 
     with st.spinner(text='Training...'):

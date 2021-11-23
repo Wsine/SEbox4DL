@@ -76,14 +76,37 @@ class PostTransformDataset(torch.utils.data.Dataset):
         return len(self.dataset)
 
 
-def load_dataset(
-        opt, split,
+def compute_mean_std(ctx, entry):
+    @ctx.cache
+    def _compute_wrapper():
+        dataset = entry(root=ctx.data_dir, train=True, download=True, transform=T.ToTensor())
+        loader = torch.utils.data.DataLoader(
+            dataset, batch_size=ctx.opt.batch_size, shuffle=False, num_workers=2
+        )
+        mean, std = 0., 0.
+        nb_samples = 0.
+        for data, _ in loader:
+            batch_samples = data.size(0)
+            data = data.view(batch_samples, data.size(1), -1)
+            mean += data.mean(2).sum(0)
+            std += data.std(2).sum(0)
+            nb_samples += batch_samples
+
+        mean /= nb_samples
+        std /= nb_samples
+
+        return mean, std
+    return _compute_wrapper()
+
+
+def load_dataset(ctx, split,
         noise=False, noise_type=None,
         gblur_std=None, target_trsf=False):
 
-    dataset_entry = eval(f'torchvision.datasets.{opt.dataset}')
-    mean = DATASET_PROBS[opt.dataset]['mean']
-    std = DATASET_PROBS[opt.dataset]['std']
+    dataset_entry = eval(f'torchvision.datasets.{ctx.opt.dataset}')
+    #  mean = DATASET_PROBS[opt.dataset]['mean']
+    #  std = DATASET_PROBS[opt.dataset]['std']
+    mean, std = compute_mean_std(ctx, dataset_entry)
     random_state = date.today().year
 
     common_transformers = [
@@ -93,13 +116,13 @@ def load_dataset(
     target_transform = None if target_trsf is False else MaskNoiseLabel()
 
     if split == 'test':
-        base_dataset = dataset_entry(root='data', train=False, download=True)
+        base_dataset = dataset_entry(root=ctx.data_dir, train=False, download=True)
     elif split == 'val':
-        base_largeset = dataset_entry(root='data', train=True, download=True)
+        base_largeset = dataset_entry(root=ctx.data_dir, train=True, download=True)
         _, base_dataset = train_test_split(
             base_largeset, test_size=1./50, random_state=random_state, stratify=base_largeset.targets)
     elif split == 'train':
-        base_largeset = dataset_entry(root='data', train=True, download=True)
+        base_largeset = dataset_entry(root=ctx.data_dir, train=True, download=True)
         base_dataset, _ = train_test_split(
             base_largeset, test_size=1./50, random_state=random_state, stratify=base_largeset.targets)
     else:
@@ -154,7 +177,7 @@ def load_dataset(
 
     shuffle = True if split == 'train' else False
     dataloader = torch.utils.data.DataLoader(
-        dataset, batch_size=opt.batch_size, shuffle=shuffle, num_workers=2
+        dataset, batch_size=ctx.opt.batch_size, shuffle=shuffle, num_workers=2
     )
 
     return dataset, dataloader

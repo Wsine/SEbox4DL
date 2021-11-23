@@ -1,28 +1,24 @@
-import streamlit as st
 from argparse import Namespace
+
 import torch
+import streamlit as st
+
 from app import sidebar
 from app.context import st_stdout, st_stderr
 from src.model import load_model
 from src.dataset import load_dataset
-from src.train import train_model
-from torch.nn import CrossEntropyLoss, MSELoss
+from src.runners.train import train_model
 
-def load_sidebar(ctx):
-    # opt: record params
+
+def load_sidebar(_):
     opt = Namespace()
-    sidebar.load_datasets(opt)
+    sidebar.load_datasets(opt, load_noise=True)
     sidebar.load_models(opt)
-    sidebar.load_train_configs(opt, True)
-    print("finetune: ", opt)
+    sidebar.load_train_options(opt)
     return opt
 
+
 def run(ctx):
-    """
-    when press RUN
-    :param ctx:
-    :return:
-    """
     st.write('# Task: Train')
 
     st.write('## Configs')
@@ -39,30 +35,18 @@ def run(ctx):
 
     with st.spinner(text='Loading dataset...'), st.expander('See loading process'):
         with st_stdout('code'), st_stderr('code'):
-            _, trainloader = load_dataset(ctx.opt, split='train')
-            _, validloader = load_dataset(ctx.opt, split='val')
+            noise = ctx.opt.add_noise != 'none'
+            _, trainloader = load_dataset(ctx, split='train', noise=noise, noise_type='random')
+            _, valloader = load_dataset(ctx, split='val', noise=noise, noise_type='random')
     st.success(':balloon: dataset loaded.')
-    # train
-    optimizer = _init_optimizer(ctx.opt.optimizer, model)
-    criterion = _init_criterion(ctx.opt.loss)
-    # can add more kinds
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
-    with st.spinner(text='Training...'), st.expander('See process in detail'):
-        with st_stdout('code'), st_stderr('code'):
-            train_model(ctx, model, trainloader, validloader, optimizer, criterion, scheduler)
+
+    with st.spinner(text='Training...'):
+        acc, loss = train_model(ctx, model, trainloader, valloader, is_finetune=True)
+
+    st.write('## Results')
+    col1, col2 = st.columns(2)
+    col1.metric('Accuracy', '{:.2f}%'.format(acc))
+    col2.metric('Loss', '{:.4f}'.format(loss))
+
     st.balloons()
-
-def _init_optimizer(optimizer, model):
-    if optimizer.lower() == "adam":
-        return torch.optim.Adam(model.parameters())
-    elif optimizer.lower() == "sgd":
-        return torch.optim.SGD(model.parameters(), lr=0.01)
-    elif optimizer.lower() == "adagrad":
-        return torch.optim.Adagrad(model.parameters())
-
-def _init_criterion(criterion):
-    if criterion.lower() == "cross-entropy":
-        return CrossEntropyLoss()
-    elif criterion.lower() == "mean squared error":
-        return MSELoss()
 

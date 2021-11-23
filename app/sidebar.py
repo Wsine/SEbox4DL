@@ -8,10 +8,9 @@ from app.context import sidebar_ctx
 
 
 @sidebar_ctx
-def load_datasets(opt):
+def load_datasets(opt, load_noise=False):
     datasets = list(torchvision.datasets.__all__)
-    opt.dataset = st.selectbox('which dataset to be used?', datasets)
-    #  opt.dataset = st.selectbox('which dataset to be used?', datasets, index=7)
+    opt.dataset = st.selectbox('which dataset to be used?', datasets, index=datasets.index('CIFAR10'))
     if opt.dataset == 'ImageFolder':
         folders = [f.name for f in os.scandir('data') if f.is_dir()]
         opt.image_folder = st.selectbox('image folder to load:', folders)
@@ -19,11 +18,14 @@ def load_datasets(opt):
         folders = [f.name for f in os.scandir('data') if f.is_dir()]
         opt.dataset_folder = st.selectbox('dataset folder to load:', folders)
 
+    if load_noise is True:
+        opt.add_noise = st.radio('which noise to be added?', ['none', 'gaussian'])
+
     opt.batch_size = st.number_input('how large is the batch size?', min_value=1, value=64)
 
 
 @sidebar_ctx
-def load_models(opt):
+def load_models(opt, load_pretrained=True):
     opt.model_source_type = st.radio(
         'which model source to be used?',
         ['official', '3rdparty', 'local']
@@ -38,7 +40,7 @@ def load_models(opt):
                    for m in eval(f'torchvision.models.{t}.__dict__.keys()') \
                    if not m.startswith('_') and not m[0].isupper() and  \
                       m != 'utils' and not m in models_tasks]
-        opt.model = st.selectbox('which model to be tested?', models)
+        opt.model = st.selectbox('which model to be used?', models)
     elif opt.model_source_type == '3rdparty':
         opt.model_source = st.text_input(
             'where is the model source?',
@@ -47,17 +49,17 @@ def load_models(opt):
         )
         if len(opt.model_source) > 0:
             models = torch.hub.list(opt.model_source)
-            opt.model = st.selectbox('which model to be tested?', models)
+            opt.model = st.selectbox('which model to be used?', models)
     elif opt.model_source_type == 'local':
         # TODO: scan and add local models
         pass
     else:
         raise ValueError('Invalid input source')
 
-
-@sidebar_ctx
-def load_pretrained(opt, preset=True):
-    opt.pretrained = st.checkbox('use (pre)trained weights?', preset)
+    if load_pretrained is True:
+        opt.pretrained = st.checkbox('use (pre)trained weights?', True)
+    else:
+        opt.pretrained = False
 
 
 @sidebar_ctx

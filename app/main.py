@@ -28,7 +28,9 @@ def set_task_config(ctx):
 
 
 def set_ctx_helper(ctx):
+    ctx.cache = st.cache
     ctx.tqdm = stqdm
+    ctx.data_dir = os.environ.get('SEBOX4DL_DATA_DIR', 'data')
     ctx.output_dir = os.environ.get('SEBOX4DL_OUTPUT_DIR', 'output')
 
 
