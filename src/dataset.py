@@ -9,12 +9,6 @@ import torchvision.transforms as T
 from sklearn.model_selection import train_test_split
 
 
-DATASET_PROBS = {
-    'CIFAR10':  {'mean': (0.4914, 0.4822, 0.4465), 'std': (0.2023, 0.1994, 0.2010)},
-    'CIFAR100': {'mean': (0.5071, 0.4867, 0.4408), 'std': (0.2675, 0.2565, 0.2761)}
-}
-
-
 class RandomApply(object):
     def __init__(self, tran, p=0.5):
         self.tran = tran
@@ -104,8 +98,6 @@ def load_dataset(ctx, split,
         gblur_std=None, target_trsf=False):
 
     dataset_entry = eval(f'torchvision.datasets.{ctx.opt.dataset}')
-    #  mean = DATASET_PROBS[opt.dataset]['mean']
-    #  std = DATASET_PROBS[opt.dataset]['std']
     mean, std = compute_mean_std(ctx, dataset_entry)
     random_state = date.today().year
 

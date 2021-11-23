@@ -45,7 +45,7 @@ def load_models(opt, load_pretrained=True):
         opt.model_source = st.text_input(
             'where is the model source?',
             placeholder='example: chenyaofo/pytorch-cifar-models',
-            help='refer to: https://pytorch.org/hub/'
+            help='refer to: https://pytorch.org/hub/ for entrypoint'
         )
         if len(opt.model_source) > 0:
             models = torch.hub.list(opt.model_source)
@@ -74,4 +74,11 @@ def load_train_options(opt):
     opt.lr = st.number_input('What is the learning rate', value=0.01, format='%.4f')
     opt.momentum = st.number_input('What is the momentum', value=0.9, format='%.4f')
     opt.weight_decay = st.number_input('What is the weight decay', value=5e-4, format='%.4f')
+
+
+@sidebar_ctx
+def load_repair_options(opt):
+    from src.runners.repair import repair_dispatcher
+    repairers = repair_dispatcher.registry.keys()
+    opt.repair_runner = st.radio('which method do you want to apply for repair?', repairers)
 
