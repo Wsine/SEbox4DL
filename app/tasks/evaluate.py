@@ -7,15 +7,13 @@ from app import sidebar
 from app.context import st_stdout, st_stderr
 from src.model import load_model
 from src.dataset import load_dataset
-from src.eval import eval_accuracy
+from src.runners.eval import eval_accuracy
 
 
-def load_sidebar(ctx):
+def load_sidebar(_):
     opt = Namespace()
     sidebar.load_datasets(opt)
     sidebar.load_models(opt)
-    sidebar.load_evaluate_configs(opt)
-    print("eval: ", opt)
     return opt
 
 
@@ -36,11 +34,11 @@ def run(ctx):
 
     with st.spinner(text='Loading dataset...'), st.expander('See loading process'):
         with st_stdout('code'), st_stderr('code'):
-            _, testloader = load_dataset(ctx.opt, split='test')
+            _, testloader = load_dataset(ctx, split='test')
     st.success(':balloon: dataset loaded.')
     std_acc = eval_accuracy(ctx, model, testloader, desc='std_acc')
 
-    _, noiseloader = load_dataset(ctx.opt, split='test', noise=True, noise_type='append')
+    _, noiseloader = load_dataset(ctx, split='test', noise=True, noise_type='append')
     rob_acc = eval_accuracy(ctx, model, noiseloader, desc='rob_acc')
 
 
