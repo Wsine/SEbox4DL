@@ -1,47 +1,49 @@
+import time
+
 import torch
-import numpy as np
-from src.utils import rgetattr
+
+from src.utils import AttrDispatcher
 
 
-generated_number = 50000
-check_nan_result = 0
-def check_layer_nan(module, fea_in, fea_out):
-    global check_nan_result
-    out = fea_out.isnan().sum()
-    check_nan_result += out
+fuzz_dispatcher = AttrDispatcher('fuzzer_runner')
+input_indicator = False
 
 
-def construct_model(model):
-    for layer_name, _ in model.named_modules():
-        try:
-            module = rgetattr(model, layer_name)
-            module.register_forward_hook(hook=check_layer_nan)
-        except:
-            continue
+@fuzz_dispatcher.register('tensorfuzz')
+def tensorfuzz_method(_, model):
+
+    def _hook_fn(module, finput, foutput):
+        if foutput.isnan().any() or foutput.isinf().any():
+            global input_indicator
+            input_indicator = True
+
+    for m in model.modules():
+        m.register_forward_hook(_hook_fn)
+
     return model
 
 
-def fuzz_numeric(ctx, model):
-    # 1. construct the new model with a hook to check the NaN problem
-    new_model = construct_model(model=model)
+def fuzz_model(ctx, model):
+    model = fuzz_dispatcher(ctx.opt, model)
 
-    # 2. generate new image
-    new_data_list = []
-    for index in range(generated_number):
-        bgr_image = np.random.randint(0, 256, size=[3, 64, 64])
-        new_data_list.append(bgr_image)
+    fuzz_result = []
 
-    # 3. test and check the NaN problem, if true store the image
-    fuzz_data_list = []
-    global check_nan_result
-    # for new_data in new_data_list:
-    for new_data in new_data_list:
-        check_nan_result = 0
-        new_model(torch.tensor(new_data, dtype=torch.float).unsqueeze(dim=0).to(ctx.device))
-        if check_nan_result > 0:
-            print("Find the data!")
-            fuzz_data_list.append(new_data)
+    elapsed_mins = 0
+    start_time = time.time()
+    while True:
+        elapsed = (time.time() - start_time) // 60
+        if elapsed > elapsed_mins:
+            print('elapsed {} mins...'.format(elapsed))
+            elapsed_mins = elapsed
+        if elapsed > ctx.opt.timeout:
+            break
 
-    return fuzz_data_list
+        global input_indicator
+        input_indicator = False
+        model_input = torch.rand((1, 3, 32, 32)).to(ctx.device)
+        model(model_input)
+        if input_indicator is True:
+            fuzz_result.append(model_input[0].cpu().numpy())
 
+    return fuzz_result
 
