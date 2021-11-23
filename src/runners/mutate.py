@@ -1,9 +1,14 @@
-import torch
 import copy
-from src.eval import eval_accuracy
+from zipfile import ZipFile
+
+import torch
+from torch import nn
+
+from src.runners.eval import eval_accuracy
+from src.utils import*
 
 
-def absent_mutate(ctx, model, data_loader):
+def __absent_mutate__(ctx, model, data_loader):
     '''
     buggy filters means that after we delete the filter, the valid accuracy will increase somehow.
     So this is where a key distinction between terms comes in handy:
@@ -61,4 +66,58 @@ def absent_mutate(ctx, model, data_loader):
             buggy_filters['acc_diff'].extend(acc_diff_layer)
             buggy_filters['buggy_filter_index'].extend(buggy_filter_index_layer)
             buggy_filters_by_layer.append({'layer': layer, 'acc_diff_layer': acc_diff_layer, 'buggy_filter_index_layer': buggy_filter_index_layer})
+
     return buggy_filters, buggy_filters_by_layer, mutated_models
+
+
+def absent_mutate(ctx, model, valloader):
+    base_acc = eval_accuracy(ctx, model, valloader, desc='Eval')
+
+    def _mask_out_channel(chn):
+        def __hook(module, finput, foutput):
+            foutput[:, chn] = 0
+            return foutput
+        return __hook
+
+    result = {}
+    conv_names = [n for n, m in model.named_modules() if isinstance(m, nn.Conv2d)]
+    for lname in ctx.tqdm(conv_names, desc='Modules'):
+        module = rgetattr(model, lname)
+        acc_diff = []
+        for chn in ctx.tqdm(range(module.out_channels), desc='Filters', leave=False):
+            handle = module.register_forward_hook(_mask_out_channel(chn))
+            acc = eval_accuracy(ctx, model, valloader, desc='Eval')
+            acc_diff.append(acc - base_acc)
+            handle.remove()
+        result[lname] = acc_diff
+        break
+
+    return result
+
+
+def pack_mutants(ctx, model, analysis):
+    model_state = model.state_dict()
+
+    mutant_idx = 0
+    for layer, diff in analysis.items():
+        for i, d in enumerate(diff):
+            if d > 0:  # accuracy improved => buggy filter
+                copy_state = copy.deepcopy(model_state)
+                for k in copy_state.keys():
+                    if k.startswith(layer):
+                        copy_state[k][i] = 0
+                save_state = {
+                    'net': copy_state,
+                    'diff_acc': d,
+                }
+                torch.save(save_state, get_model_path(ctx, state=f'mutant_{mutant_idx}'))
+                mutant_idx += 1
+
+    mutants_path = os.path.join(get_output_path(ctx), 'mutants.zip')
+    with ZipFile(mutants_path, 'w') as zipobj:
+        for idx in range(mutant_idx):
+            model_path = get_model_path(ctx, state=f'mutant_{idx}')
+            zipobj.write(model_path)
+
+    return mutants_path
+
