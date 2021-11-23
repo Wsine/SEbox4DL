@@ -4,10 +4,8 @@ from importlib import import_module
 import streamlit as st
 from stqdm import stqdm
 from app.context import create_context
-# export PYTHONPATH="$(pwd)"
-# todo: torun: streamlit run app/main.py --server.headless true
 
-def set_page_config(ctx):
+def set_page_config(_):
     st.set_page_config(page_title='Ponyta', page_icon=':horse:')  # type: ignore
 
 
@@ -19,7 +17,6 @@ def set_task_config(ctx):
     with st.sidebar:
         st.write('## Task')
         ctx.task = st.sidebar.selectbox('which task to perform with this toolbox?', tasks)
-        #  ctx.task = st.sidebar.selectbox('which task to perform with this toolbox?', tasks, index=4)
 
     if ctx.task != 'none':
         task = import_module(f'app.tasks.{ctx.task}')
@@ -32,6 +29,7 @@ def set_task_config(ctx):
 
 def set_ctx_helper(ctx):
     ctx.tqdm = stqdm
+    ctx.output_dir = os.environ.get('SEBOX4DL_OUTPUT_DIR', 'output')
 
 
 def main():

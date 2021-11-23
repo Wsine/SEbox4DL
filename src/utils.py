@@ -5,18 +5,18 @@ import functools
 import hashlib
 
 
-def get_model_path(opt, state):
+def get_model_path(ctx, state):
     path = os.path.join(
-        opt.output_dir, opt.dataset, opt.model, f"model_{state}.pth")
+        ctx.output_dir, ctx.opt.dataset, ctx.opt.model, f"model_{state}.pth")
     return path
 
 
-def guard_folder(opt, folder=None):
+def guard_folder(ctx, folder=None):
     if not folder:
         folder = []
     elif isinstance(folder, str):
         folder = [folder]
-    folder.append(os.path.join(opt.output_dir, opt.dataset, opt.model))
+    folder.append(os.path.join(ctx.output_dir, ctx.opt.dataset, ctx.opt.model))
     for f in folder:
         if not os.path.isdir(f):
             os.makedirs(f)
