@@ -5,9 +5,13 @@ import functools
 import hashlib
 
 
-def get_model_path(ctx, state):
+def get_output_path(ctx):
     path = os.path.join(
-        ctx.output_dir, ctx.opt.dataset, ctx.opt.model, f"model_{state}.pth")
+        ctx.output_dir, ctx.opt.dataset, ctx.opt.model)
+    return path
+
+def get_model_path(ctx, state):
+    path = os.path.join(get_output_path(ctx), f"model_{state}.pth")
     return path
 
 
