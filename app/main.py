@@ -6,16 +6,17 @@ from stqdm import stqdm
 from app.context import create_context
 
 def set_page_config(_):
-    st.set_page_config(page_title='Ponyta', page_icon=':horse:')  # type: ignore
+    st.set_page_config(page_title='SEbox4DL', page_icon=':horse:')  # type: ignore
 
 
 def set_task_config(ctx):
-    tasks = ['none'] \
-          + [f.name.rstrip('.py') for f in os.scandir(os.path.join('app', 'tasks')) \
-             if not f.name.startswith('_')]
-
     with st.sidebar:
+        st.markdown("<h1 style='text-align: center;'>SEbox4DL</h1>", unsafe_allow_html=True)
+
         st.write('## Task')
+        tasks = ['none'] \
+              + [f.name.rstrip('.py') for f in os.scandir(os.path.join('app', 'tasks')) \
+                 if not f.name.startswith('_')]
         ctx.task = st.sidebar.selectbox('which task to perform with this toolbox?', tasks)
 
     if ctx.task != 'none':

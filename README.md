@@ -29,7 +29,9 @@ When it starts, click the PREVIEW button on the top-right corner and preview via
 
 ## Learn how to use
 
-a YouTube video will be shown here
+a YouTube video is shown for the demonstration. just click the image below.
+
+[![SEbox4DL](https://img.youtube.com/vi/EYeFFi4lswc/0.jpg)](https://www.youtube.com/watch?v=EYeFFi4lswc)
 
 ## Acknowledge
 
