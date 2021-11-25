@@ -42,8 +42,7 @@ def run(ctx):
 
     st.write('## Results')
 
-    flatten_acc = [v for d in mutate_analysis.values() for v in d]
-    flatten_acc = sorted(flatten_acc, reverse=True)
+    flatten_acc = [v for d in mutate_analysis.values() for v in d if v > 0]
     st.write('**absent filter effects on accuracy**')
     st.bar_chart({'filters': flatten_acc})
 

@@ -71,6 +71,7 @@ def __absent_mutate__(ctx, model, data_loader):
 
 
 def absent_mutate(ctx, model, valloader):
+    guard_folder(ctx)
     base_acc = eval_accuracy(ctx, model, valloader, desc='Eval')
 
     def _mask_out_channel(chn):
@@ -81,7 +82,7 @@ def absent_mutate(ctx, model, valloader):
 
     result = {}
     conv_names = [n for n, m in model.named_modules() if isinstance(m, nn.Conv2d)]
-    for lname in ctx.tqdm(conv_names, desc='Modules'):
+    for lidx, lname in enumerate(ctx.tqdm(conv_names, desc='Modules')):
         module = rgetattr(model, lname)
         acc_diff = []
         for chn in ctx.tqdm(range(module.out_channels), desc='Filters', leave=False):
@@ -90,7 +91,8 @@ def absent_mutate(ctx, model, valloader):
             acc_diff.append(acc - base_acc)
             handle.remove()
         result[lname] = acc_diff
-        break
+        if lidx > 5:
+            break
 
     return result
 
